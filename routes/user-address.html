@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>User Address – Tindo</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans">
+
+  <!-- Header -->
+  <header class="bg-green-600 text-white p-4 shadow-md flex justify-between items-center">
+    <h1 class="text-2xl font-bold">📍 User Address</h1>
+    <a href="index.html" class="bg-white text-green-700 px-4 py-2 rounded-xl font-medium hover:bg-green-100 transition">
+      Back to Home
+    </a>
+  </header>
+
+  <!-- Address Form -->
+  <main class="max-w-4xl mx-auto mt-10 p-6 bg-white rounded-2xl shadow-lg">
+    <h2 class="text-2xl font-semibold mb-4 border-b pb-3 text-green-700">Enter Your Address</h2>
+
+    <form id="addressForm" class="space-y-4">
+      <div>
+        <label for="fullName" class="block text-lg font-medium">Full Name</label>
+        <input type="text" id="fullName" name="fullName" class="w-full p-3 border rounded-lg" placeholder="Enter your full name" required>
+      </div>
+
+      <div>
+        <label for="phone" class="block text-lg font-medium">Phone Number</label>
+        <input type="tel" id="phone" name="phone" class="w-full p-3 border rounded-lg" placeholder="Enter your phone number" required>
+      </div>
+
+      <div>
+        <label for="address" class="block text-lg font-medium">Address</label>
+        <textarea id="address" name="address" class="w-full p-3 border rounded-lg" placeholder="Enter your address" rows="4" required></textarea>
+      </div>
+
+      <div>
+        <label for="landmark" class="block text-lg font-medium">Landmark (Optional)</label>
+        <input type="text" id="landmark" name="landmark" class="w-full p-3 border rounded-lg" placeholder="Enter a landmark">
+      </div>
+
+      <div>
+        <label for="pincode" class="block text-lg font-medium">Pincode</label>
+        <input type="text" id="pincode" name="pincode" class="w-full p-3 border rounded-lg" placeholder="Enter your pincode" required>
+      </div>
+
+      <button type="submit" class="w-full bg-green-600 text-white py-3 rounded-xl text-lg font-medium hover:bg-green-700 transition">
+        Save Address
+      </button>
+    </form>
+  </main>
+
+  <!-- Footer -->
+  <footer class="text-center mt-16 py-6 bg-gray-100 text-gray-500 text-sm">
+    © 2025 Tindo – Mana Tindi, Mana App
+  </footer>
+
+  <script>
+    document.getElementById('addressForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+
+      const fullName = document.getElementById('fullName').value;
+      const phone = document.getElementById('phone').value;
+      const address = document.getElementById('address').value;
+      const landmark = document.getElementById('landmark').value;
+      const pincode = document.getElementById('pincode').value;
+
+      const userAddress = {
+        fullName,
+        phone,
+        address,
+        landmark,
+        pincode
+      };
+
+      localStorage.setItem('tindo_user_address', JSON.stringify(userAddress));
+      alert('✅ Address saved successfully!');
+      window.location.href = 'cart.html';
+    });
+  </script>
+</body>
+</html>

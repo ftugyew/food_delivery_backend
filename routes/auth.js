@@ -1,0 +1,253 @@
+
+const express = require("express");
+const router = express.Router();
+const db = require("../db"); // your DB connection
+const jwt = require("jsonwebtoken");
+const multer = require("multer");
+const path = require("path");
+
+// JWT secret (store in .env in production)
+const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
+
+// Multer setup for file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, "uploads/");
+  },
+  filename: (req, file, cb) => {
+    cb(null, Date.now() + path.extname(file.originalname));
+  }
+});
+const upload = multer({ storage });
+
+// ===== Generate Token =====
+function generateToken(user) {
+  return jwt.sign(
+    {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      restaurant_id: user.restaurant_id || null
+    },
+    JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+}
+
+// ===== Register =====
+router.post("/register", async (req, res) => {
+  try {
+    const { 
+      name, 
+      email, 
+      phone, 
+      password, 
+      role,
+      restaurant_name,
+      description,
+      cuisine,
+      eta
+    } = req.body;
+
+    if (!name || !email || !password || !role) {
+      return res.status(400).json({ error: "All fields required" });
+    }
+
+    // Check if email already exists
+    const [existing] = await db.execute("SELECT * FROM users WHERE email = ?", [email]);
+    if (existing.length > 0) {
+      return res.status(400).json({ error: "Email already registered" });
+    }
+
+    let restaurantId = null;
+
+    // If restaurant → create restaurant entry too
+    if (role === "restaurant") {
+      const [result] = await db.execute(
+        `INSERT INTO restaurants (name, description, cuisine, eta, email, phone, status, created_at) 
+         VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW())`,
+        [
+          restaurant_name || name, 
+          description || '', 
+          cuisine || 'Multi Cuisine', 
+          parseInt(eta) || 30, 
+          email, 
+          phone
+        ]
+      );
+      restaurantId = result.insertId;
+    }
+
+    // Set status
+    let status = "approved"; // default
+    if (role === "restaurant" || role === "delivery" || role === "delivery_agent") {
+      status = "pending"; // needs admin approval
+    }
+
+    // Insert user
+    const [userResult] = await db.execute(
+      "INSERT INTO users (name, email, phone, password, role, restaurant_id, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [name, email, phone, password, role, restaurantId, status]
+    );
+
+    const user = {
+      id: userResult.insertId,
+      name,
+      email,
+      phone,
+      role,
+      restaurant_id: restaurantId,
+      status
+    };
+
+    // If delivery agent, create corresponding agent profile for operations
+    if (role === 'delivery_agent') {
+      try {
+        const vehicle_type = (req.body && req.body.vehicle_type) || null;
+        const aadhar = (req.body && req.body.aadhar) || null;
+        // Try inserting with optional aadhar column first
+        try {
+          await db.execute(
+            "INSERT INTO agents (user_id, name, phone, status, vehicle_type, aadhar) VALUES (?, ?, ?, 'Inactive', ?, ?)",
+            [user.id, name, phone, vehicle_type, aadhar]
+          );
+        } catch (err) {
+          if (err && (err.code === 'ER_BAD_FIELD_ERROR' || /Unknown column/i.test(err.message || ''))) {
+            // Fallback: agents table may not have aadhar column; insert without it
+            await db.execute(
+              "INSERT INTO agents (user_id, name, phone, status, vehicle_type) VALUES (?, ?, ?, 'Inactive', ?)",
+              [user.id, name, phone, vehicle_type]
+            );
+          } else {
+            throw err;
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to create agent profile for delivery agent:', e.message || e);
+      }
+    }
+
+    // Only auto-login if approved
+    if (status === "approved") {
+      const token = generateToken(user);
+      return res.json({ token, user });
+    } else {
+      return res.json({ message: "Registration submitted, pending admin approval", user });
+    }
+
+  } catch (err) {
+    console.error("Register Error:", err);
+    res.status(500).json({ error: "Registration failed" });
+  }
+});
+
+// ===== Restaurant Registration with Photo =====
+router.post("/register-restaurant", upload.single("photo"), async (req, res) => {
+  try {
+    const { 
+      name, 
+      email, 
+      phone, 
+      password, 
+      role, 
+      restaurant_name, 
+      description, 
+      cuisine, 
+      eta 
+    } = req.body;
+
+    if (!name || !email || !password || !restaurant_name || !cuisine) {
+      return res.status(400).json({ error: "Required fields missing" });
+    }
+
+    // Check if email already exists
+    const [existing] = await db.execute("SELECT * FROM users WHERE email = ?", [email]);
+    if (existing.length > 0) {
+      return res.status(400).json({ error: "Email already registered" });
+    }
+
+    // Create restaurant entry with photo
+    const imageUrl = req.file ? req.file.filename : null;
+    const [result] = await db.execute(
+      `INSERT INTO restaurants (name, description, cuisine, eta, image_url, email, phone, status, created_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NOW())`,
+      [restaurant_name, description || '', cuisine, parseInt(eta) || 30, imageUrl, email, phone]
+    );
+    const restaurantId = result.insertId;
+
+    // Insert user with restaurant_id
+    const [userResult] = await db.execute(
+      "INSERT INTO users (name, email, phone, password, role, restaurant_id, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
+      [name, email, phone, password, role, restaurantId]
+    );
+
+    const user = {
+      id: userResult.insertId,
+      name,
+      email,
+      phone,
+      role,
+      restaurant_id: restaurantId,
+      status: "pending"
+    };
+
+    res.json({ 
+      message: "Restaurant registration submitted, pending admin approval", 
+      user 
+    });
+
+  } catch (err) {
+    console.error("Restaurant Register Error:", err);
+    res.status(500).json({ error: "Restaurant registration failed" });
+  }
+});
+
+// ===== Login =====
+router.post("/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: "Email and password required" });
+
+    const [rows] = await db.execute("SELECT * FROM users WHERE email = ? AND password = ?", [email, password]);
+    if (rows.length === 0) return res.status(401).json({ error: "Invalid credentials" });
+
+    const user = rows[0];
+
+    // ✅ Block login until approved
+    if (user.status !== "approved") {
+      return res.status(403).json({ error: "Your account is awaiting admin approval" });
+    }
+
+    const token = generateToken(user);
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        restaurant_id: user.restaurant_id
+      }
+    });
+  } catch (err) {
+    console.error("Login Error:", err);
+    res.status(500).json({ error: "Login failed" });
+  }
+});
+
+// ===== Middleware: Protect Routes =====
+function authMiddleware(req, res, next) {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) return res.status(401).json({ error: "No token provided" });
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded; // { id, email, role, restaurant_id }
+    next();
+  } catch (err) {
+    return res.status(403).json({ error: "Invalid token" });
+  }
+}
+
+module.exports = { router, authMiddleware };

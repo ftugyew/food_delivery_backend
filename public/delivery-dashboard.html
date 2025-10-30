@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tindo Delivery Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+</head>
+<body class="bg-green-50 text-gray-900">
+
+<!-- Navbar -->
+<header class="bg-white shadow sticky top-0 z-50">
+  <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+    <h1 class="text-2xl font-bold text-green-600">🚴 Tindo Delivery</h1>
+    <button onclick="logout()" class="bg-red-500 text-white px-4 py-2 rounded">Logout</button>
+  </div>
+</header>
+
+<!-- Dashboard -->
+<section class="max-w-7xl mx-auto p-6">
+  <!-- Break/Offline Mode -->
+  <div class="bg-white p-6 rounded-xl shadow mb-6 flex items-center justify-between">
+    <h3 class="text-2xl font-bold text-gray-800 flex items-center gap-2"><span>⏳</span> Availability</h3>
+    <div class="flex items-center gap-2">
+      <span class="font-medium text-green-700">Online</span>
+      <label class="relative inline-flex items-center cursor-pointer">
+        <input type="checkbox" id="availabilityToggle" class="sr-only peer" checked>
+        <div class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:bg-green-400 transition-all"></div>
+        <div class="absolute left-1 top-1 bg-white border border-gray-300 rounded-full w-4 h-4 transition-all peer-checked:translate-x-5"></div>
+      </label>
+      <span class="font-medium text-yellow-700">Offline/Break</span>
+    </div>
+  </div>
+  <!-- Earnings Tracker -->
+  <div class="bg-white p-6 rounded-xl shadow mb-6">
+  <h3 class="text-2xl font-bold mb-4 text-green-700 flex items-center gap-2"><span>�</span> Earnings Tracker</h3>
+    <div class="grid md:grid-cols-2 gap-6">
+      <div class="card bg-green-50 p-4 rounded shadow">
+        <h4 class="font-bold mb-2">Weekly/Monthly Income</h4>
+        <canvas id="earningsChart"></canvas>
+      </div>
+      <div class="card bg-green-50 p-4 rounded shadow">
+        <h4 class="font-bold mb-2">Per-Order Earnings</h4>
+        <ul id="orderEarnings" class="space-y-2"></ul>
+      </div>
+    </div>
+  </div>
+  <!-- Delivery History -->
+  <div class="bg-white p-6 rounded-xl shadow mb-6">
+  <h3 class="text-2xl font-bold mb-4 text-purple-700 flex items-center gap-2"><span>🕓</span> Delivery History</h3>
+    <div id="historyList" class="space-y-3">
+      <p class="text-gray-500">No history yet...</p>
+    </div>
+  </div>
+  <h2 class="text-3xl font-bold text-green-600 mb-6">📦 My Dashboard</h2>
+
+  <!-- Earnings Summary -->
+  <div class="grid md:grid-cols-3 gap-6 mb-6">
+    <div class="bg-white p-4 rounded-xl shadow text-center">
+      <h3 class="font-bold">Today’s Earnings</h3>
+      <p id="earnToday" class="text-2xl text-green-600">₹0</p>
+    </div>
+    <div class="bg-white p-4 rounded-xl shadow text-center">
+      <h3 class="font-bold">Weekly Earnings</h3>
+      <p id="earnWeek" class="text-2xl text-green-600">₹0</p>
+    </div>
+    <div class="bg-white p-4 rounded-xl shadow text-center">
+      <h3 class="font-bold">Total Orders</h3>
+      <p id="totalOrders" class="text-2xl text-green-600">0</p>
+    </div>
+  </div>
+
+  <!-- Assigned Orders -->
+  <div class="bg-white p-6 rounded-xl shadow mb-6">
+  <h3 class="text-2xl font-bold mb-4 text-blue-700 flex items-center gap-2"><span>�</span> Assigned Orders</h3>
+    <div id="ordersList" class="space-y-3">
+      <p class="text-gray-500">No orders yet...</p>
+    </div>
+  </div>
+
+  <!-- Live Map in scrollable box -->
+  <div class="bg-white p-6 rounded-xl shadow mb-6">
+    <h3 class="text-xl font-bold mb-4">🗺️ My Live Location</h3>
+    <div id="map" class="h-96 w-full rounded overflow-hidden" style="max-height: 400px; box-shadow: 0 4px 16px rgba(16,185,129,0.10);"></div>
+  </div>
+
+  <!-- Notifications -->
+  <div class="bg-white p-6 rounded-xl shadow">
+    <h3 class="text-xl font-bold mb-4">🔔 Notifications</h3>
+    <ul id="notifications" class="space-y-2"></ul>
+  </div>
+</section>
+
+<script>
+  const socket = io("http://localhost:5000");
+  // Resolve agent id from logged-in user
+  const loggedUser = (()=>{ try { return JSON.parse(localStorage.getItem('user')); } catch(_) { return null; } })();
+  let agentId = 1;
+  (async () => {
+    if (loggedUser) {
+      try {
+        const resp = await fetch(`http://localhost:5000/api/delivery/by-user/${loggedUser.id}`);
+        if (resp.ok) {
+          const agent = await resp.json();
+          agentId = agent.id;
+        }
+      } catch (_) {}
+    }
+    // Init after agentId is resolved
+    loadOrders();
+    shareLocation();
+  })();
+
+  // Fetch assigned orders
+  async function loadOrders() {
+    let res = await fetch(`http://localhost:5000/api/delivery/${agentId}/orders`);
+    let orders = await res.json();
+    renderOrders(orders);
+  }
+
+  // Render orders
+  function renderOrders(orders) {
+    const list = document.getElementById("ordersList");
+    list.innerHTML = "";
+    orders.forEach(order => {
+      const div = document.createElement("div");
+      div.className = "card bg-green-50 p-3 rounded shadow";
+      const customerName = order.customer_name || 'Unknown';
+      const pickupLocation = order.pickup_location || order.restaurant_address || 'N/A';
+      div.innerHTML = `
+        <p class="font-bold text-lg text-blue-700 mb-1">Order #${order.id}</p>
+        <p class="text-sm text-gray-700">Customer: ${customerName}</p>
+        <p class="text-sm text-gray-700">Pickup: ${pickupLocation}</p>
+        <p class="text-sm text-gray-600">Items: ${JSON.parse(order.items).map(i => i.name).join(", ")}</p>
+        <p class="text-sm text-gray-600">Status: ${order.status}</p>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <button onclick="updateOrder(${order.id}, 'Picked')" class="bg-yellow-500 text-white px-4 py-2 rounded-lg shadow hover:bg-yellow-600 transition-all flex items-center gap-1"><span>📤</span> Picked</button>
+          <button onclick="updateOrder(${order.id}, 'Delivered')" class="bg-green-600 text-white px-4 py-2 rounded-lg shadow hover:bg-green-700 transition-all flex items-center gap-1"><span>✅</span> Delivered</button>
+          <button onclick="openRouteOptimization('${pickupLocation}')" class="bg-blue-600 text-white px-4 py-2 rounded-lg shadow hover:bg-blue-700 transition-all flex items-center gap-1"><span>🗺️</span> Route</button>
+          <button onclick="chatCustomer('${customerName}')" class="bg-purple-600 text-white px-4 py-2 rounded-lg shadow hover:bg-purple-700 transition-all flex items-center gap-1"><span>💬</span> Chat</button>
+          <button onclick="callCustomer('${order.customer_phone || ''}')" class="bg-pink-600 text-white px-4 py-2 rounded-lg shadow hover:bg-pink-700 transition-all flex items-center gap-1"><span>📞</span> Call</button>
+          <button onclick="showProofModal(${order.id})" class="bg-gray-700 text-white px-4 py-2 rounded-lg shadow hover:bg-gray-800 transition-all flex items-center gap-1"><span>🖼️</span> Proof</button>
+        </div>
+      `;
+      list.appendChild(div);
+    });
+  }
+
+  // Update order status
+  async function updateOrder(orderId, status) {
+    await fetch("http://localhost:5000/api/delivery/update-order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ order_id: orderId, status })
+    });
+    loadOrders();
+  }
+
+  // Live location sharing
+  function shareLocation() {
+    if (navigator.geolocation) {
+      navigator.geolocation.watchPosition(async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        await fetch("http://localhost:5000/api/delivery/location", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agent_id: agentId, lat, lng })
+        });
+        // Also broadcast live location over Socket.IO for real-time tracking
+        try {
+          socket.emit("agentLocation", { agentId, lat, lng });
+        } catch (_) {}
+        updateMap(lat, lng);
+      });
+    }
+  }
+
+  // Map setup
+  var map = L.map("map").setView([17.3850, 78.4867], 13);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "&copy; OpenStreetMap contributors"
+  }).addTo(map);
+  var marker = L.marker([17.3850, 78.4867]).addTo(map);
+
+  function updateMap(lat, lng) {
+    marker.setLatLng([lat, lng]);
+    map.panTo([lat, lng]);
+  }
+
+  // Listen for backend-pushed live location updates (Admin/User view compatibility)
+  try {
+    socket.on("locationUpdate", ({ agentId: _id, lat, lng }) => {
+      updateMap(lat, lng);
+    });
+  } catch (_) {}
+
+  // Notifications
+  socket.on(`orderForAgent_${agentId}`, (order) => {
+    showOrderNotification(`📦 New Order #${order.id} assigned!`, 'green');
+    loadOrders();
+  });
+
+  socket.on(`orderCanceled_${agentId}`, (order) => {
+    showOrderNotification(`❌ Order #${order.id} canceled!`, 'red');
+    loadOrders();
+  });
+
+  socket.on(`orderDelayed_${agentId}`, (order) => {
+    showOrderNotification(`⏳ Order #${order.id} delayed!`, 'yellow');
+    loadOrders();
+  });
+
+  function showOrderNotification(message, color) {
+    const noti = document.createElement("li");
+    let bg = 'bg-green-100';
+    if (color === 'red') bg = 'bg-red-100';
+    if (color === 'yellow') bg = 'bg-yellow-100';
+    noti.className = `${bg} p-3 rounded shadow`;
+    noti.textContent = message;
+    document.getElementById("notifications").prepend(noti);
+  }
+
+  function logout() {
+    alert("Logging out...");
+    window.location.href = "login.html";
+  }
+
+  // Fetch and display orders for the delivery agent
+  async function fetchAgentOrders() {
+    const agentId = 1; // Replace with dynamic agent ID
+
+    try {
+      const response = await fetch(`/api/orders/agent/${agentId}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch agent orders');
+      }
+
+      const orders = await response.json();
+      console.log('Agent Orders:', orders);
+
+      // Display orders dynamically (example)
+      const ordersList = document.getElementById('ordersList');
+      ordersList.innerHTML = orders.map(order => `
+        <div class="order">
+          <p><b>Order ID:</b> ${order.id}</p>
+          <p><b>Status:</b> ${order.status}</p>
+          <p><b>Total:</b> ₹${order.total}</p>
+        </div>
+      `).join('');
+    } catch (error) {
+      console.error('Error fetching agent orders:', error);
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', fetchAgentOrders);
+</script>
+<section class="max-w-4xl mx-auto p-6">
+
+</body>
+</html>

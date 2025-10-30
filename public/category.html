@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Category - Tindo</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="css/animations.css">
+</head>
+<body class="bg-gradient-to-br from-green-50 to-white text-gray-800 min-h-screen">
+  <!-- Navbar (copied from index.html) -->
+  <header class="bg-white/95 backdrop-blur-sm shadow-lg sticky top-0 z-50 border-b border-green-100">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+      <div class="flex items-center space-x-3">
+        <div class="w-12 h-12 bg-gradient-to-br from-green-500 to-green-600 rounded-xl flex items-center justify-center">
+          <span class="text-white text-xl font-bold">T</span>
+        </div>
+        <h1 class="text-2xl font-bold bg-gradient-to-r from-green-600 to-green-700 bg-clip-text text-transparent">Tindo</h1>
+      </div>
+      <nav class="space-x-8 flex items-center">
+        <a href="index.html" class="text-gray-600 hover:text-green-600 font-medium transition-colors duration-200">Home</a>
+        <a href="cart.html" class="relative bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 flex items-center gap-2">Cart</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto py-12 px-4">
+  <h2 id="category-title" class="text-4xl font-bold text-green-700 mb-8 text-center">Category</h2>
+  <div id="category-desc" class="text-center text-green-800 mb-8 text-lg"></div>
+  <div id="dishes-list" class="grid md:grid-cols-3 gap-8"></div>
+  <div id="no-dishes" class="text-center text-gray-500 text-lg py-10 hidden">No dishes found for this category.</div>
+  </main>
+
+  <script>
+    const BASE = "http://localhost:5000";
+    const params = new URLSearchParams(window.location.search);
+    const category = params.get('name');
+    document.getElementById('category-title').textContent = category ? `${category} Restaurants` : 'Category';
+    document.getElementById('category-desc').textContent = category ? `Restaurants serving ${category} dishes.` : '';
+
+    async function loadCategoryDishes() {
+      try {
+        // Fetch all restaurants and menu items
+        const [restaurantsRes, menuRes] = await Promise.all([
+          fetch(`${BASE}/api/restaurants`),
+          fetch(`${BASE}/api/admin/menu`)
+        ]);
+        const restaurants = await restaurantsRes.json();
+        const menuItems = await menuRes.json();
+
+        // Improved: If category is a cuisine (like 'Indian'), match dishes whose category is 'Indian' or whose cuisine is 'Indian', or whose item_name is a popular Indian dish
+        const popularIndianDishes = ['biryani', 'parotta', 'dosa', 'idli', 'samosa', 'paneer', 'dal', 'curry', 'roti'];
+        const isIndian = category.toLowerCase() === 'indian';
+        const matchingMenu = menuItems.filter(item => {
+          const nameMatch = item.item_name && item.item_name.toLowerCase().includes(category.toLowerCase());
+          const catMatch = item.category && item.category.toLowerCase().includes(category.toLowerCase());
+          const cuisineMatch = item.cuisine && item.cuisine.toLowerCase().includes(category.toLowerCase());
+          const popularMatch = isIndian && item.item_name && popularIndianDishes.some(dish => item.item_name.toLowerCase().includes(dish));
+          return nameMatch || catMatch || cuisineMatch || popularMatch;
+        });
+
+        const list = document.getElementById('dishes-list');
+        const emptyMsg = document.getElementById('no-dishes');
+        if (!matchingMenu.length) {
+          emptyMsg.classList.remove('hidden');
+          return;
+        }
+        list.innerHTML = matchingMenu.map(dish => {
+          const restaurant = restaurants.find(r => r.id === dish.restaurant_id);
+          // Always show restaurant name from lookup, fallback to dish.restaurant_name if available
+          const restName = restaurant?.name || dish.restaurant_name || 'Unknown';
+          const restId = restaurant?.id || dish.restaurant_id;
+          const eta = restaurant?.eta || '30';
+          return `
+            <div class="card rounded-2xl overflow-hidden shadow-lg flex flex-col">
+              <img src="${BASE}/uploads/${dish.image_url || 'default.jpg'}" class="w-full h-48 object-cover" alt="${dish.item_name}">
+              <div class="p-6 flex-1 flex flex-col justify-between">
+                <h3 class="text-xl font-bold text-green-700 mb-2">${dish.item_name}</h3>
+                <p class="text-gray-600 mb-2">${dish.description || ''}</p>
+                <p class="text-green-600 font-semibold mb-2">₹${dish.price}</p>
+                <p class="text-gray-500 mb-2">⏱️ ${eta} mins delivery</p>
+                <p class="text-gray-800 font-medium mb-2">Restaurant: <span class="font-bold">${restName}</span></p>
+                <a href="restaurant.html?id=${restId}" class="btn-primary mt-4 inline-block px-6 py-2 rounded">View Restaurant</a>
+              </div>
+            </div>
+          `;
+        }).join('');
+      } catch (err) {
+        console.error('Error loading category dishes:', err);
+        document.getElementById('no-dishes').textContent = 'Failed to load dishes.';
+        document.getElementById('no-dishes').classList.remove('hidden');
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadCategoryDishes);
+  </script>
+</body>
+</html>
