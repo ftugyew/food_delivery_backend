@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Delivery Agent Simulator</title>
+</head>
+<body>
+  <h2>🚴 Delivery Agent Location Simulator</h2>
+  <button onclick="startMoving()">Start Moving</button>
+
+  <script>
+    async function sendLocation(lat, lng) {
+      await fetch("http://localhost:5000/api/agent-location", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agent_id: 1, lat, lng })
+      });
+    }
+
+    function startMoving() {
+      let lat = 17.3850, lng = 78.4867;
+      setInterval(() => {
+        lat += (Math.random() - 0.5) * 0.01;
+        lng += (Math.random() - 0.5) * 0.01;
+        sendLocation(lat, lng);
+      }, 3000);
+    }
+  </script>
+</body>
+</html>

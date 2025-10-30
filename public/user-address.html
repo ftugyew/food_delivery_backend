@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>User Address Entry | Tindo / VYNK</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <style>
+    body { background:#f8fafc; font-family:'Inter',sans-serif }
+    .card { background:white; border-radius:16px; box-shadow:0 6px 18px rgba(0,0,0,0.06); padding:24px }
+    .btn { background:#22c55e; color:white; padding:10px 18px; border-radius:8px; font-weight:600 }
+    .btn:hover { background:#16a34a }
+    .address-type button { border:1px solid #d1d5db; padding:6px 14px; border-radius:8px; background:white }
+    .address-type button.active { background:#22c55e; color:white; border-color:#16a34a }
+    #mapBox { height:300px; border-radius:12px; margin-top:10px; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col items-center p-4">
+  <div class="w-full max-w-3xl card">
+    <h1 class="text-2xl font-bold mb-2 text-center">🏠 Add Your Address</h1>
+    <p class="text-gray-500 text-center mb-6">Enter your details and save multiple addresses easily</p>
+
+    <!-- Profile Image -->
+    <div class="flex flex-col items-center mb-6">
+      <img id="preview" src="https://cdn-icons-png.flaticon.com/512/149/149071.png"
+           class="w-24 h-24 rounded-full object-cover border mb-2" />
+      <input type="file" id="imageUpload" accept="image/*" class="text-sm" />
+    </div>
+
+    <!-- Address Form -->
+    <form id="userForm" class="space-y-4">
+      <div class="grid grid-cols-2 gap-4">
+        <div><label>Full Name</label><input id="name" type="text" class="w-full border p-2 rounded" required></div>
+        <div><label>Phone Number</label><input id="phone" type="tel" maxlength="10" class="w-full border p-2 rounded" required></div>
+        <div><label>Email</label><input id="email" type="email" class="w-full border p-2 rounded"></div>
+        <div><label>Pincode</label><input id="pincode" type="text" maxlength="6" class="w-full border p-2 rounded" required></div>
+      </div>
+
+      <div><label>House / Flat / Door No.</label><input id="house" type="text" class="w-full border p-2 rounded" required></div>
+      <div><label>Street / Locality</label><input id="street" type="text" class="w-full border p-2 rounded" required></div>
+      <div><label>Landmark</label><input id="landmark" type="text" class="w-full border p-2 rounded"></div>
+
+      <div class="grid grid-cols-3 gap-4">
+        <div><label>City</label><input id="city" type="text" class="w-full border p-2 rounded" required></div>
+        <div><label>State</label><input id="state" type="text" class="w-full border p-2 rounded" required></div>
+        <div><label>Country</label><input id="country" type="text" value="India" class="w-full border p-2 rounded"></div>
+      </div>
+
+      <!-- Address Type -->
+      <div>
+        <label>Address Type</label>
+        <div class="address-type flex gap-2 mt-2">
+          <button type="button" class="addrTypeBtn" data-type="Home">🏠 Home</button>
+          <button type="button" class="addrTypeBtn" data-type="Work">🏢 Work</button>
+          <button type="button" class="addrTypeBtn" data-type="Other">🏘️ Other</button>
+        </div>
+      </div>
+
+      <!-- Detect + Map -->
+      <div class="flex gap-2 items-center mt-3">
+        <button type="button" id="detectBtn" class="btn flex-1">📍 Detect My Location</button>
+      </div>
+      <div id="mapBox"></div>
+
+      <button type="button" id="confirmAddressBtn" class="btn w-full mt-4">✅ Confirm Address</button>
+    </form>
+
+    <div class="mt-8">
+      <h2 class="font-semibold mb-2 text-lg">Saved Addresses</h2>
+      <div id="savedList" class="text-sm"></div>
+    </div>
+  </div>
+
+<script>
+let map, marker, currentType='Home', userLat=17.385, userLng=78.4867;
+const typeButtons=document.querySelectorAll('.addrTypeBtn'), savedList=document.getElementById('savedList');
+
+typeButtons.forEach(b=>b.onclick=()=>{typeButtons.forEach(x=>x.classList.remove('active'));b.classList.add('active');currentType=b.dataset.type});
+
+// 🌍 Initialize Leaflet Map
+function initMap(lat=userLat, lng=userLng){
+  if (!map) {
+    map = L.map('mapBox').setView([lat, lng], 14);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+  } else {
+    map.setView([lat, lng], 14);
+  }
+
+  if (!marker) {
+    marker = L.marker([lat, lng], {draggable:true}).addTo(map);
+    marker.on('dragend', function(){
+      const pos = marker.getLatLng();
+      userLat = pos.lat;
+      userLng = pos.lng;
+      reverseGeocode(userLat, userLng);
+    });
+  } else {
+    marker.setLatLng([lat, lng]);
+  }
+
+  // Initial reverse geocode to populate fields
+  reverseGeocode(lat, lng);
+}
+
+async function reverseGeocode(lat, lng){
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+    const data = await res.json();
+    const a = data.address || {};
+    const streetVal = [a.road, a.neighbourhood, a.suburb].filter(Boolean).join(', ');
+    const cityVal = a.city || a.town || a.village || a.hamlet || '';
+    const stateVal = a.state || '';
+    const pinVal = a.postcode || '';
+    const countryVal = a.country || '';
+    setAddressFields({ street: streetVal, city: cityVal, state: stateVal, pincode: pinVal, country: countryVal });
+  } catch (e) {
+    // silent fail
+  }
+}
+
+function setAddressFields(addr){
+  if (addr.street && document.getElementById('street')) document.getElementById('street').value = addr.street;
+  if (addr.city && document.getElementById('city')) document.getElementById('city').value = addr.city;
+  if (addr.state && document.getElementById('state')) document.getElementById('state').value = addr.state;
+  if (addr.pincode && document.getElementById('pincode')) document.getElementById('pincode').value = addr.pincode;
+  if (addr.country && document.getElementById('country')) document.getElementById('country').value = addr.country;
+}
+
+// 📍 Detect Location
+document.getElementById('detectBtn').onclick = () => {
+  if(navigator.geolocation){
+    navigator.geolocation.getCurrentPosition(pos=>{
+      userLat=pos.coords.latitude;userLng=pos.coords.longitude;
+      map.setView([userLat,userLng],15);
+      marker.setLatLng([userLat,userLng]);
+      reverseGeocode(userLat, userLng);
+    },()=>alert("Failed to detect location. Enable GPS!"));
+  } else alert("Geolocation not supported");
+};
+
+// 🧾 Image Preview
+document.getElementById('imageUpload').onchange=function(){
+  const f=this.files[0];if(f){const r=new FileReader();r.onload=e=>preview.src=e.target.result;r.readAsDataURL(f);}
+};
+
+// 💾 Save Address
+document.getElementById('confirmAddressBtn').onclick=()=>{
+  const u={name:name.value,phone:phone.value,email:email.value,
+    house:house.value,street:street.value,landmark:landmark.value,
+    city:city.value,state:state.value,country:country.value,pincode:pincode.value,
+    type:currentType,image:preview.src,latitude:userLat,longitude:userLng};
+  const arr=JSON.parse(localStorage.getItem('addresses')||'[]');
+  arr.push(u);localStorage.setItem('addresses',JSON.stringify(arr));
+  // Save as selected address for payment page
+  localStorage.setItem('selectedAddress', JSON.stringify(u));
+  showSaved();alert('✅ Address Saved!');window.location.href='payment-method.html';
+};
+
+// 🧾 Show Saved Addresses
+function showSaved(){
+  const arr=JSON.parse(localStorage.getItem('addresses')||'[]');
+  savedList.innerHTML='';arr.forEach((u,i)=>{
+    const d=document.createElement('div');d.className='p-2 border rounded mb-2';
+    d.innerHTML=`<b>${u.name}</b> (${u.type})<br>${u.house}, ${u.street}, ${u.city}<br>
+    ${u.state}, ${u.pincode}, ${u.country}<br>📍${u.latitude.toFixed(4)},${u.longitude.toFixed(4)}<br>📞${u.phone}`;
+    savedList.appendChild(d);
+  });
+}showSaved();
+
+// 🚀 Initialize on Load
+window.onload = () => initMap();
+</script>
+</body>
+</html>

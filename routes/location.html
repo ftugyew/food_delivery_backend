@@ -1,0 +1,77 @@
+<!-- Google Maps API -->
+  <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=initMap" async defer></script>
+
+  <script>
+    let map;
+    let marker;
+
+    function initMap() {
+      const defaultLocation = { lat: 17.3850, lng: 78.4867 }; // Default to Hyderabad
+
+      // Initialize map
+      map = new google.maps.Map(document.getElementById("map"), {
+        center: defaultLocation,
+        zoom: 13,
+      });
+
+      // Initialize marker
+      marker = new google.maps.Marker({
+        position: defaultLocation,
+        map: map,
+        draggable: true,
+      });
+
+      // Update location display on marker drag
+      marker.addListener("dragend", () => {
+        const position = marker.getPosition();
+        updateDisplay(position.lat(), position.lng());
+      });
+    }
+
+    // Detect current location
+    function detectLiveLocation() {
+      if (!navigator.geolocation) {
+        alert("Your browser does not support geolocation.");
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const { latitude, longitude } = pos.coords;
+          const currentLocation = { lat: latitude, lng: longitude };
+
+          map.setCenter(currentLocation);
+          marker.setPosition(currentLocation);
+          updateDisplay(latitude, longitude);
+        },
+        (err) => {
+          console.warn("Location access denied or failed:", err);
+          alert("⚠️ Location access denied. You can manually select your location on the map.");
+        },
+        { enableHighAccuracy: true }
+      );
+    }
+
+    // Update location display
+    function updateDisplay(lat, lng) {
+      document.getElementById("locationDisplay").innerHTML = `
+        📍 <span class="font-semibold">Selected Location:</span>
+        <span class="text-green-700">Lat: ${lat.toFixed(5)}, Lng: ${lng.toFixed(5)}</span>
+      `;
+    }
+
+    // Automatically detect location on page load
+    window.addEventListener("load", detectLiveLocation);
+
+    // Confirm button logic
+    document.getElementById('confirmBtn').addEventListener('click', () => {
+      const position = marker.getPosition();
+      const lat = position.lat();
+      const lng = position.lng();
+
+      localStorage.setItem("tindo_user_location", JSON.stringify({ lat, lng }));
+      console.log(`✅ Location confirmed!\nLatitude: ${lat.toFixed(5)}\nLongitude: ${lng.toFixed(5)}`);
+      console.log(`Redirecting to payment-method.html with location: Lat ${lat}, Lng ${lng}`); // Debugging log
+      window.location.href = "payment-method.html"; // Redirect to payment-method.html
+    });
+  </script>
