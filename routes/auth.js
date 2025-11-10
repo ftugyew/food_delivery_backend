@@ -26,12 +26,18 @@ function generateToken(user) {
     {
       id: user.id,
       email: user.email,
-      role: user.role,
+      role: normalizeRole(user.role),
       restaurant_id: user.restaurant_id || null
     },
     JWT_SECRET,
     { expiresIn: "7d" }
   );
+}
+
+// Normalize role names for frontend friendliness
+function normalizeRole(role) {
+  if (!role) return role;
+  return role === 'delivery_agent' ? 'delivery' : role;
 }
 
 // ===== Register =====
@@ -99,6 +105,9 @@ router.post("/register", async (req, res) => {
       restaurant_id: restaurantId,
       status
     };
+
+    // Normalize role for frontend convenience
+    user.role = normalizeRole(user.role);
 
     // If delivery agent, create corresponding agent profile for operations
     if (role === 'delivery_agent') {
@@ -191,6 +200,9 @@ router.post("/register-restaurant", upload.single("photo"), async (req, res) => 
       status: "pending"
     };
 
+    // Normalize role for frontend convenience
+    user.role = normalizeRole(user.role);
+
     res.json({ 
       message: "Restaurant registration submitted, pending admin approval", 
       user 
@@ -226,7 +238,7 @@ router.post("/login", async (req, res) => {
         name: user.name,
         email: user.email,
         phone: user.phone,
-        role: user.role,
+        role: normalizeRole(user.role),
         restaurant_id: user.restaurant_id
       }
     });
@@ -238,7 +250,12 @@ router.post("/login", async (req, res) => {
 
 // ===== Middleware: Protect Routes =====
 function authMiddleware(req, res, next) {
-  const token = req.headers.authorization?.split(" ")[1];
+  // Primary: Authorization header
+  let token = req.headers.authorization?.split(" ")[1];
+
+  // Fallbacks: query param (used when uploading multipart/form-data where headers may be stripped)
+  if (!token && req.query && req.query.token) token = req.query.token;
+
   if (!token) return res.status(401).json({ error: "No token provided" });
 
   try {
@@ -246,6 +263,7 @@ function authMiddleware(req, res, next) {
     req.user = decoded; // { id, email, role, restaurant_id }
     next();
   } catch (err) {
+    console.error('authMiddleware: token verification failed', err.message || err);
     return res.status(403).json({ error: "Invalid token" });
   }
 }

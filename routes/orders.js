@@ -70,7 +70,11 @@ module.exports = (io) => {
       // Determine restaurant coordinates: prefer DB, fallback to provided rest_lat/rest_lng
       let rlat = null, rlng = null;
       try {
-        const [rows] = await db.execute("SELECT lat, lng FROM restaurants WHERE id = ? LIMIT 1", [restaurant_id]);
+        // Support both legacy (lat/lng) and full (latitude/longitude) column names
+        const [rows] = await db.execute(
+          "SELECT COALESCE(lat, latitude) AS lat, COALESCE(lng, longitude) AS lng FROM restaurants WHERE id = ? LIMIT 1",
+          [restaurant_id]
+        );
         if (rows && rows.length && rows[0].lat != null && rows[0].lng != null) {
           rlat = Number(rows[0].lat); rlng = Number(rows[0].lng);
         }
@@ -221,9 +225,12 @@ module.exports = (io) => {
       // Pre-compute nearest agent and status before insert
       let assignedAgentId = null;
       try {
-        // Get restaurant coordinates
+        // Get restaurant coordinates (support legacy and full column names)
         let rlat = null, rlng = null;
-        const [rrows] = await db.execute("SELECT lat, lng FROM restaurants WHERE id = ? LIMIT 1", [rid]);
+        const [rrows] = await db.execute(
+          "SELECT COALESCE(lat, latitude) AS lat, COALESCE(lng, longitude) AS lng FROM restaurants WHERE id = ? LIMIT 1",
+          [rid]
+        );
         if (rrows && rrows.length && rrows[0].lat != null && rrows[0].lng != null) {
           rlat = Number(rrows[0].lat); rlng = Number(rrows[0].lng);
         }
@@ -262,9 +269,19 @@ module.exports = (io) => {
   agent_id: assignedAgentId,
         order_code: orderCode
       };
-      io.emit("newOrder", payload);
-      if (assignedAgentId) io.emit(`orderForAgent_${assignedAgentId}`, payload);
-      io.emit(`orderForRestaurant_${rid}`, payload);
+      // Debug logs: confirm the server is emitting socket events for new orders
+      try {
+        console.log('📡 Emitting socket events for new order:', { orderId: result.insertId, agent_id: assignedAgentId, restaurant_id: rid });
+        io.emit("newOrder", payload);
+        if (assignedAgentId) {
+          console.log(`📨 Emitting orderForAgent_${assignedAgentId}`);
+          io.emit(`orderForAgent_${assignedAgentId}`, payload);
+        }
+        console.log(`📨 Emitting orderForRestaurant_${rid}`);
+        io.emit(`orderForRestaurant_${rid}`, payload);
+      } catch (emitErr) {
+        console.error('Socket emit failed for new order:', emitErr);
+      }
 
       res.json({ success: true, order_id: result.insertId, order_code: orderCode, agent_id: assignedAgentId });
     } catch (err) {

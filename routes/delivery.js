@@ -55,12 +55,20 @@ module.exports = (io) => {
     res.json({ message: '✅ Call initiated (demo)' });
   });
 
-  // Update agent location
+  // Update agent location (standardize event payload keys)
   router.post("/location", (req, res) => {
-    const { agent_id, lat, lng } = req.body;
-    db.query("UPDATE agents SET lat=?, lng=?, status='Active' WHERE id=?", [lat, lng, agent_id]);
-    io.emit("agentLocation", { agent_id, lat, lng });
-    res.json({ message: "✅ Location updated" });
+    const { agent_id, lat, lng } = req.body || {};
+    if (!agent_id || typeof lat !== 'number' || typeof lng !== 'number') {
+      return res.status(400).json({ error: 'Invalid agent location payload' });
+    }
+    db.query("UPDATE agents SET lat=?, lng=?, status='Active' WHERE id=?", [lat, lng, agent_id], (err) => {
+      if (err) return res.status(500).json({ error: 'DB update failed' });
+      // Emit BOTH legacy and new events for compatibility; normalize to agentId
+      const payload = { agentId: agent_id, lat, lng };
+      try { io.emit('locationUpdate', payload); } catch(_) {}
+      try { io.emit('agentLocation', payload); } catch(_) {}
+      res.json({ message: '✅ Location updated', ...payload });
+    });
   });
 
   // Fetch agent location by order id (for tracking page polling)
