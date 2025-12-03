@@ -120,12 +120,12 @@ async function migrateDatabase() {
       console.log('⚠️  Could not ensure banners table:', e.message);
     }
 
-    // Ensure reviews table exists
+    // Ensure restaurant_reviews table exists
     try {
-      const [rv] = await connection.query("SHOW TABLES LIKE 'reviews'");
+      const [rv] = await connection.query("SHOW TABLES LIKE 'restaurant_reviews'");
       if (rv.length === 0) {
         await connection.query(`
-          CREATE TABLE reviews (
+          CREATE TABLE restaurant_reviews (
             id INT AUTO_INCREMENT PRIMARY KEY,
             order_id INT NOT NULL,
             user_id INT NULL,
@@ -139,12 +139,37 @@ async function migrateDatabase() {
             FOREIGN KEY (restaurant_id) REFERENCES restaurants(id) ON DELETE CASCADE
           )
         `);
-        console.log('✅ Created reviews table');
+        console.log('✅ Created restaurant_reviews table');
       } else {
-        console.log('✅ reviews table already exists');
+        console.log('✅ restaurant_reviews table already exists');
       }
     } catch (e) {
-      console.log('⚠️  Could not ensure reviews table:', e.message);
+      console.log('⚠️  Could not ensure restaurant_reviews table:', e.message);
+    }
+
+    // If an old `reviews` table exists, copy data into `restaurant_reviews` safely
+    try {
+      const [old] = await connection.query("SHOW TABLES LIKE 'reviews'");
+      if (old.length > 0) {
+        console.log('ℹ️ Found legacy `reviews` table. Checking for data migration...');
+        const [countNew] = await connection.query("SELECT COUNT(*) AS cnt FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'restaurant_reviews'");
+        // If restaurant_reviews exists, attempt to copy rows if none present
+        const [rows] = await connection.query("SELECT COUNT(*) AS cnt FROM restaurant_reviews");
+        const newCnt = rows[0]?.cnt || 0;
+        if (newCnt === 0) {
+          try {
+            await connection.query(`INSERT INTO restaurant_reviews (order_id, user_id, restaurant_id, rating, comment, created_at)
+              SELECT order_id, user_id, restaurant_id, rating, comment, created_at FROM reviews`);
+            console.log('✅ Migrated data from `reviews` into `restaurant_reviews`.');
+          } catch (copyErr) {
+            console.log('⚠️ Could not migrate data from `reviews` to `restaurant_reviews`:', copyErr.message);
+          }
+        } else {
+          console.log('ℹ️ `restaurant_reviews` already contains data; skipping automatic migration.');
+        }
+      }
+    } catch (e) {
+      console.log('⚠️ Error checking legacy `reviews` table:', e.message);
     }
 
     console.log('✅ Database migration completed successfully!');

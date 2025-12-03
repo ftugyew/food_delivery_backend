@@ -6,6 +6,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 const dotenv = require("dotenv");
 const path = require("path");
+const fs = require("fs");
 const multer = require("multer");
 const axios = require("axios");
 const bcrypt = require("bcryptjs");
@@ -13,6 +14,52 @@ const bcrypt = require("bcryptjs");
 dotenv.config();
 
 const db = require("./db");
+// Small helper error type for clearer runtime errors when parsing paths/params
+class PathError extends Error {
+  constructor(message, cause) {
+    super(message);
+    this.name = 'PathError';
+    if (cause) this.cause = cause;
+    if (Error.captureStackTrace) Error.captureStackTrace(this, PathError);
+  }
+}
+
+// Helper to throw a PathError with interpolated index message
+function throwPathError(index, cause) {
+  throw new PathError(`missing parameter name at index ${index}`, cause);
+}
+// ===== Mappls Token Cache =====
+let mapplsToken = null;
+let tokenExpiry = 0;
+
+async function getMapplsToken() {
+  const now = Date.now();
+
+  // Return existing token if still valid
+  if (mapplsToken && now < tokenExpiry) {
+    return mapplsToken;
+  }
+
+  console.log("🔄 Fetching new Mappls token...");
+
+  const clientId = process.env.MAPPLS_CLIENT_ID || "96dHZVzsAuv7B5EkcSSzEefSELCP1aRLsL_0MY9Cp3epWMeFg2WQv1kv7dgQuGBNLnxirw5J9eWNzohDvjSp7RJ9RyXHHRXh";
+  const clientSecret = process.env.MAPPLS_CLIENT_SECRET || "lrFxI-iSEg_h44hWmIUgohsKpN7AoIk-B5WjMRuvO2c6Zc7iLEnY3IG80uUUUsmbu2u2D50WT8gDIdG23f3Ph6l0lIKgdzzDpk9cdz4HlPg=";
+
+  const resp = await axios.post(
+    "https://outpost.mappls.com/api/security/oauth/token",
+    new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: clientId,
+      client_secret: clientSecret,
+    }),
+    { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+  );
+
+  mapplsToken = resp.data.access_token;
+  tokenExpiry = now + (resp.data.expires_in - 300) * 1000; // expires_in usually 86400 seconds (~24h)
+  return mapplsToken;
+}
+
 
 // Optional modular routes (if present in repo)
 let authRoutes, authMiddleware, orderRoutes, paymentRoutes, trackingRoutes, userAddressesRoutes, deliveryRoutes;
@@ -41,22 +88,34 @@ const io = new Server(server, { cors: { origin: "*" } });
 app.use(bodyParser.json());
 app.use(express.json());
 
-// CORS (allow Live Server and no-origin tools)
+// ✅ CORS Setup
+
+
 const allowedOrigins = [
   "http://127.0.0.1:5500",
   "http://localhost:5500",
+  "http://localhost:3000",   // React/Vite/Next.js dev servers
+  "http://127.0.0.1:3000"
 ];
+
 app.use(
   cors({
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    origin: function (origin, callback) {
+      // Allow requests with no origin (e.g., mobile apps or curl)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      // Block others (explicitly deny without throwing an error)
       return callback(null, false);
     },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true, // allow cookies/auth headers if needed
   })
 );
+
+// ✅ Automatically handle preflight requests for any route
 app.options(/.*/, cors());
+
 
 // Multer (uploads)
 const storage = multer.diskStorage({
@@ -65,35 +124,33 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// Static files
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
-app.use(express.static(path.join(__dirname, "..", "frotend")));
 
+// Static files (uploads + frontend)
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 // Avoid favicon 404 log noise
 app.get("/favicon.ico", (req, res) => res.status(204).end());
 
 // Helper: fallback restaurant cards when curated tables are missing
-async function fetchFallbackRestaurantCards(limit = 10) {
-  const [rows] = await db.execute(
-    `SELECT r.id AS restaurant_id, r.name, r.cuisine, r.image_url, r.status AS restaurant_status
-     FROM restaurants r
-     WHERE r.status = 'approved'
-     ORDER BY r.created_at DESC, r.id DESC
-     LIMIT ?`,
-    [limit]
-  );
-  return rows.map((r) => ({
-    id: r.restaurant_id,
-    restaurant_id: r.restaurant_id,
-    position: null, // hide numbered badge on UI for fallback
-    is_active: null,
-    name: r.name,
-    cuisine: r.cuisine,
-    image_url: r.image_url,
-    restaurant_status: r.restaurant_status,
-    avg_rating: null,
-    rating_count: 0,
-  }));
+fetch('http://localhost:5000/api/orders')
+  .then(response => response.json())
+  .then(data => {
+    console.log('Fetched orders:', data);
+  })
+  .catch(error => {
+    console.error('Error fetching orders:', error);
+  });
+
+function fallbackRestaurantCards(limit = 10) {
+  return fetch(`http://localhost:5000/api/restaurants?limit=${limit}`)
+    .then(response => response.json())
+    .then(data => {
+      console.log('Fetched fallback restaurant cards:', data);
+      return data;
+    })
+    .catch(error => {
+      console.error('Error fetching fallback restaurant cards:', error);
+      return [];
+    });
 }
 
 // ===== Featured Restaurants (public) =====
@@ -101,8 +158,8 @@ app.get("/api/featured-restaurants", async (req, res) => {
   try {
     const [results] = await db.execute(`
       SELECT fr.*, r.name, r.cuisine, r.image_url AS image_url, r.status as restaurant_status,
-             (SELECT ROUND(AVG(rv.rating),1) FROM reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
-             (SELECT COUNT(*) FROM reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
+             (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
+             (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
       FROM featured_restaurants fr
       JOIN restaurants r ON fr.restaurant_id = r.id
       ORDER BY fr.position ASC
@@ -141,8 +198,8 @@ app.get("/api/top-restaurants", async (req, res) => {
   try {
     const [results] = await db.execute(`
       SELECT tr.*, r.name, r.cuisine, r.image_url AS image_url, r.status as restaurant_status,
-             (SELECT ROUND(AVG(rv.rating),1) FROM reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
-             (SELECT COUNT(*) FROM reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
+             (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
+             (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
       FROM top_restaurants tr
       JOIN restaurants r ON tr.restaurant_id = r.id
       ORDER BY tr.position ASC
@@ -181,8 +238,8 @@ app.get("/api/restaurants", async (req, res) => {
   try {
     const [results] = await db.execute(`
       SELECT r.*,
-             (SELECT ROUND(AVG(rv.rating),1) FROM reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
-             (SELECT COUNT(*) FROM reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
+             (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
+             (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
       FROM restaurants r
       WHERE r.status='approved'
     `);
@@ -251,42 +308,75 @@ app.delete("/api/admin/banners/:id", async (req, res) => {
   }
 });
 
-// ===== Mappls Token (OAuth) =====
+// ===== Mappls Token Route =====
 app.get("/api/mappls/token", async (req, res) => {
   try {
-    const clientId = process.env.MAPPLS_CLIENT_ID;
-    const clientSecret = process.env.MAPPLS_CLIENT_SECRET;
-    if (!clientId || !clientSecret) return res.status(500).json({ error: "Mappls credentials not configured" });
-    const params = new URLSearchParams({
-      grant_type: "client_credentials",
-      client_id: clientId,
-      client_secret: clientSecret,
-    });
-    const { data } = await axios.post(
+    const clientId = "96dHZVzsAuv7B5EkcSSzEefSELCP1aRLsL_0MY9Cp3epWMeFg2WQv1kv7dgQuGBNLnxirw5J9eWNzohDvjSp7RJ9RyXHHRXh";
+    const clientSecret = "lrFxI-iSEg_h44hWmIUgohsKpN7AoIk-B5WjMRuvO2c6Zc7iLEnY3IG80uUUUsmbu2u2D50WT8gDIdG23f3Ph6l0lIKgdzzDpk9cdz4HlPg=";
+
+    const tokenResponse = await axios.post(
       "https://outpost.mappls.com/api/security/oauth/token",
-      params.toString(),
+      new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: clientId,
+        client_secret: clientSecret,
+      }),
       { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
     );
-    return res.json(data);
+
+    const token = tokenResponse.data.access_token;
+    console.log("✅ Mappls token generated successfully");
+    res.json({ access_token: token });
   } catch (err) {
-    console.error("Mappls token fetch failed:", err?.response?.data || err?.message || err);
-    return res.status(500).json({ error: "Failed to generate Mappls token" });
+    console.error("❌ Failed to fetch Mappls token:", err.response?.data || err.message);
+    res.status(500).json({ error: "Failed to fetch Mappls token" });
   }
 });
 
-// ===== Reverse Geocoding (OSM fallback) =====
-app.get("/api/geocode/reverse", async (req, res) => {
+
+// ===== Reverse Geocode (Mappls) =====
+app.get("/api/mappls/reverse-geocode", async (req, res) => {
   try {
     const { lat, lng } = req.query;
-    if (!lat || !lng) return res.status(400).json({ error: "lat and lng are required" });
-    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&addressdetails=1`;
-    const { data } = await axios.get(url, { headers: { "User-Agent": "tindo-app/1.0" } });
-    return res.json({ address: data.display_name, address_details: data.address || null });
+    if (!lat || !lng)
+      return res.status(400).json({ error: "lat and lng are required" });
+
+    // ✅ Get token from cache or fetch new
+    const token = await getMapplsToken();
+
+    // ✅ Use correct REST KEY here
+    const REST_KEY = "522d3498e3667eac0fc7f509c00ac75a"; // from your HTML Mappls SDK
+    const mapplsURL = `https://apis.mappls.com/advancedmaps/v1/${REST_KEY}/rev_geocode?lat=${lat}&lng=${lng}`;
+
+    // ✅ Include access token in headers
+    const { data } = await axios.get(mapplsURL, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    console.log("✅ Mappls reverse-geocode raw:", data);
+
+    const r = data.results?.[0] || data.result || data.address || {};
+    const address = {
+      formatted: r.formattedAddress || r.formatted || null,
+      street: [r.poi, r.locality, r.subLocality, r.road].filter(Boolean).join(", "),
+      city: r.city || r.district || r.village || "",
+      state: r.state || "",
+      pincode: r.pincode || "",
+      country: r.country || "India",
+      latitude: lat,
+      longitude: lng,
+    };
+
+    res.json({ success: true, source: "Mappls", address });
   } catch (err) {
-    console.error("Reverse geocode error:", err?.message || err);
-    return res.status(500).json({ error: "Failed to reverse geocode" });
+    console.error("❌ Reverse geocode failed:", err.response?.data || err.message);
+    res.status(500).json({
+      error: "Failed to reverse geocode",
+      details: err.response?.data || err.message
+    });
   }
 });
+
 
 // ===== Reviews =====
 app.post("/api/orders/:orderId/review", async (req, res) => {
@@ -301,10 +391,10 @@ app.post("/api/orders/:orderId/review", async (req, res) => {
     );
     if (!orders.length) return res.status(404).json({ error: "Order not found" });
     const ord = orders[0];
-    const [exists] = await db.execute("SELECT id FROM reviews WHERE order_id = ? LIMIT 1", [orderId]);
+  const [exists] = await db.execute("SELECT id FROM restaurant_reviews WHERE order_id = ? LIMIT 1", [orderId]);
     if (exists.length) return res.status(409).json({ error: "Review already submitted for this order" });
     await db.execute(
-      "INSERT INTO reviews (order_id, user_id, restaurant_id, rating, comment) VALUES (?,?,?,?,?)",
+  "INSERT INTO restaurant_reviews (order_id, user_id, restaurant_id, rating, comment) VALUES (?,?,?,?,?)",
       [orderId, ord.user_id || null, ord.restaurant_id, Math.round(rating), comment || null]
     );
     return res.json({ message: "Thanks for your review!" });
@@ -317,7 +407,7 @@ app.get("/api/restaurants/:id/reviews/summary", async (req, res) => {
   try {
     const rid = Number(req.params.id);
     const [[row]] = await db.execute(
-      "SELECT ROUND(AVG(rating),1) AS avg, COUNT(*) AS count FROM reviews WHERE restaurant_id = ?",
+  "SELECT ROUND(AVG(rating),1) AS avg, COUNT(*) AS count FROM restaurant_reviews WHERE restaurant_id = ?",
       [rid]
     );
     return res.json({ avg: row?.avg || null, count: row?.count || 0 });
@@ -510,47 +600,11 @@ if (authMiddleware) {
   });
 }
 
-// ===== Socket.IO live tracking =====
-let deliveryAgents = {};
-io.on("connection", (socket) => {
-  console.log("🟢 Socket connected:", socket.id);
-  socket.on("agentLocation", (data) => {
-    try {
-      const { agentId, lat, lng } = data || {};
-      if (!agentId || typeof lat !== "number" || typeof lng !== "number") return;
-      deliveryAgents[agentId] = { lat, lng };
-      io.emit("locationUpdate", { agentId, lat, lng });
-    } catch (e) {
-      console.error("agentLocation handler error:", e?.message || e);
-    }
-  });
-  socket.on("disconnect", () => {
-    console.log("🔴 Socket disconnected:", socket.id);
-  });
-});
-
-// Root and SPA catch-all
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "..", "frotend", "index.html"));
-});
-app.use((req, res) => {
-  res.sendFile(path.join(__dirname, "..", "frotend", "index.html"));
-});
-
 // (listen moved to bottom; ensure only one listen call exists)
 
-// ✅ Socket.IO listeners (now io exists)
-io.on("connection", (socket) => {
-  console.log("🟢 Client connected:", socket.id);
-
-  socket.on("disconnect", () => {
-    // Replacing file with a clean, single implementation to fix 'io is not defined'.
-    // Due to patch limitations, please allow me to recreate this file cleanly in the next step.
-  });
-});
 app.get('/api/featured-restaurants', async (req, res) => {
   try {
-    const [results] = await db.execute(`SELECT fr.*, r.name, r.cuisine, r.image_url AS image_url, r.status as restaurant_status, (SELECT ROUND(AVG(rv.rating),1) FROM reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating, (SELECT COUNT(*) FROM reviews rv WHERE rv.restaurant_id = r.id) AS rating_count FROM featured_restaurants fr JOIN restaurants r ON fr.restaurant_id = r.id ORDER BY fr.position ASC`);
+  const [results] = await db.execute(`SELECT fr.*, r.name, r.cuisine, r.image_url AS image_url, r.status as restaurant_status, (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating, (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count FROM featured_restaurants fr JOIN restaurants r ON fr.restaurant_id = r.id ORDER BY fr.position ASC`);
     return res.json(results);
   } catch (err) {
     console.error('Error fetching featured restaurants:', err?.message || err);
@@ -562,7 +616,7 @@ app.get('/api/featured-restaurants', async (req, res) => {
 // Top
 app.get('/api/top-restaurants', async (req, res) => {
   try {
-    const [results] = await db.execute(`SELECT tr.*, r.name, r.cuisine, r.image_url AS image_url, r.status as restaurant_status, (SELECT ROUND(AVG(rv.rating),1) FROM reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating, (SELECT COUNT(*) FROM reviews rv WHERE rv.restaurant_id = r.id) AS rating_count FROM top_restaurants tr JOIN restaurants r ON tr.restaurant_id = r.id ORDER BY tr.position ASC`);
+  const [results] = await db.execute(`SELECT tr.*, r.name, r.cuisine, r.image_url AS image_url, r.status as restaurant_status, (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating, (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count FROM top_restaurants tr JOIN restaurants r ON tr.restaurant_id = r.id ORDER BY tr.position ASC`);
     return res.json(results);
   } catch (err) {
     console.error('Error fetching top restaurants:', err?.message || err);
@@ -574,27 +628,12 @@ app.get('/api/top-restaurants', async (req, res) => {
 // Restaurants list
 app.get('/api/restaurants', async (req, res) => {
   try {
-    const [results] = await db.execute(`SELECT r.*, (SELECT ROUND(AVG(rv.rating),1) FROM reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating, (SELECT COUNT(*) FROM reviews rv WHERE rv.restaurant_id = r.id) AS rating_count FROM restaurants r WHERE r.status='approved'`);
+  const [results] = await db.execute(`SELECT r.*, (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating, (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count FROM restaurants r WHERE r.status='approved'`);
     return res.json(results);
   } catch (err) {
     console.error('Error fetching restaurants:', err?.message || err);
     try { const fallback = await fetchFallbackRestaurantCards(20); return res.json(fallback); } catch (e) { console.error('Restaurants fallback failed:', e?.message || e); }
     return res.status(500).json({ error: 'DB error' });
-  }
-});
-
-// Mappls token
-app.get('/api/mappls/token', async (req, res) => {
-  try {
-    const clientId = process.env.MAPPLS_CLIENT_ID;
-    const clientSecret = process.env.MAPPLS_CLIENT_SECRET;
-    if (!clientId || !clientSecret) return res.status(500).json({ error: 'Mappls credentials not configured' });
-    const params = new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId, client_secret: clientSecret });
-    const { data } = await axios.post('https://outpost.mappls.com/api/security/oauth/token', params.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
-    return res.json(data);
-  } catch (err) {
-    console.error('Mappls token fetch failed:', err?.response?.data || err.message || err);
-    return res.status(500).json({ error: 'Failed to generate Mappls token' });
   }
 });
 
@@ -621,9 +660,9 @@ app.post('/api/orders/:orderId/review', async (req, res) => {
     const [orders] = await db.execute('SELECT id, user_id, restaurant_id, status FROM orders WHERE id = ? LIMIT 1', [orderId]);
     if (!orders.length) return res.status(404).json({ error: 'Order not found' });
     const ord = orders[0];
-    const [exists] = await db.execute('SELECT id FROM reviews WHERE order_id = ? LIMIT 1', [orderId]);
+  const [exists] = await db.execute('SELECT id FROM restaurant_reviews WHERE order_id = ? LIMIT 1', [orderId]);
     if (exists.length) return res.status(409).json({ error: 'Review already submitted for this order' });
-    await db.execute('INSERT INTO reviews (order_id, user_id, restaurant_id, rating, comment) VALUES (?,?,?,?,?)', [orderId, ord.user_id || null, ord.restaurant_id, Math.round(rating), comment || null]);
+  await db.execute('INSERT INTO restaurant_reviews (order_id, user_id, restaurant_id, rating, comment) VALUES (?,?,?,?,?)', [orderId, ord.user_id || null, ord.restaurant_id, Math.round(rating), comment || null]);
     return res.json({ message: 'Thanks for your review!' });
   } catch (err) {
     console.error('Review submit error:', err?.message || err);
@@ -634,7 +673,7 @@ app.post('/api/orders/:orderId/review', async (req, res) => {
 app.get('/api/restaurants/:id/reviews/summary', async (req, res) => {
   try {
     const rid = Number(req.params.id);
-    const [[row]] = await db.execute('SELECT ROUND(AVG(rating),1) AS avg, COUNT(*) AS count FROM reviews WHERE restaurant_id = ?', [rid]);
+  const [[row]] = await db.execute('SELECT ROUND(AVG(rating),1) AS avg, COUNT(*) AS count FROM restaurant_reviews WHERE restaurant_id = ?', [rid]);
     return res.json({ avg: row?.avg || null, count: row?.count || 0 });
   } catch (err) {
     console.error('Review summary error:', err?.message || err);
@@ -644,10 +683,7 @@ app.get('/api/restaurants/:id/reviews/summary', async (req, res) => {
 
 // ✅ Correct SPA fallback (Express v5 compatible)
 app.get('/favicon.ico', (req, res) => res.status(204).end());
-app.use((req, res) => {
-  // corrected 'frontend' folder path
-  res.sendFile(path.join(__dirname, '..', 'frontend', 'index.html'));
-});
+
 
 // ✅ Delivery agent assignment route (fixed async + clean logic)
 app.put('/api/orders/:orderId/assign', async (req, res) => {
@@ -792,50 +828,8 @@ if (paymentRoutes) app.use("/api/payments", paymentRoutes);
 if (trackingRoutes) app.use("/api/tracking", trackingRoutes);
 if (userAddressesRoutes)
   app.use("/api/user-addresses", userAddressesRoutes);
-
-// ✅ 8. Default fallback (for frontend)
-app.use(express.static(path.join(__dirname, "..", "frontend")));
-app.use((req, res) => {
-  const indexFile = path.join(__dirname, "..", "frontend", "index.html");
-  if (fs.existsSync(indexFile)) return res.sendFile(indexFile);
-  res.status(404).json({ error: "Not Found" });
-});
-
 // SPA: serve index for unmatched routes (client-side routing)
-app.use((req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'frotend', 'index.html'));
-});
 
-
-
-async function fetchFallbackRestaurantCards(limit = 10) {
-  const [rows] = await db.execute(
-    `SELECT
-       r.id AS restaurant_id,
-       r.name,
-       r.cuisine,
-       r.image_url,
-       r.status AS restaurant_status
-     FROM restaurants r
-     WHERE r.status = 'approved'
-     ORDER BY r.id DESC
-     LIMIT ?`,
-    [limit]
-  );
-
-  return rows.map((row, index) => ({
-    id: row.restaurant_id,
-    restaurant_id: row.restaurant_id,
-    position: index + 1,
-    is_active: null,
-    name: row.name,
-    cuisine: row.cuisine,
-    image_url: row.image_url,
-    restaurant_status: row.restaurant_status,
-    avg_rating: null,
-    rating_count: 0,
-  }));
-}
 // ✅ Import routes safely
 let orderRoutesFactory;
 try {
@@ -973,8 +967,8 @@ app.get("/api/restaurants", async (req, res) => {
     const [results] = await db.execute(`
       SELECT 
         r.*,
-        (SELECT ROUND(AVG(rv.rating),1) FROM reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
-        (SELECT COUNT(*) FROM reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
+        (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
+          (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
       FROM restaurants r
       WHERE r.status='approved'
     `);
@@ -984,6 +978,54 @@ app.get("/api/restaurants", async (req, res) => {
     // Graceful fallback (no SQL fragments)
     try {
       const fallback = await fetchFallbackRestaurantCards(20);
+
+      // Server-side search endpoint: search menu items and include restaurant metadata
+      app.get('/api/search', async (req, res) => {
+        try {
+          const q = (req.query.q || '').trim();
+          if (!q) return res.json({ results: [], total: 0 });
+
+          // pagination support
+          const limit = Math.min(100, parseInt(req.query.limit) || 50);
+          const offset = Math.max(0, parseInt(req.query.offset) || 0);
+
+          // Use case-insensitive search by lowering input and comparing with LOWER(...) in query
+          const like = `%${q.toLowerCase()}%`;
+
+          const sql = `
+            SELECT m.id as menu_id, m.item_name, m.description, m.price, m.image_url as item_image,
+                   r.id as restaurant_id, r.name as restaurant_name, r.address as restaurant_address,
+                   COALESCE(r.latitude, r.lat) as latitude, COALESCE(r.longitude, r.lng) as longitude,
+                   r.image_url as restaurant_image, r.eta as restaurant_eta
+            FROM menu m
+            JOIN restaurants r ON m.restaurant_id = r.id
+            WHERE LOWER(m.item_name) LIKE ?
+               OR LOWER(m.category) LIKE ?
+               OR LOWER(r.name) LIKE ?
+            ORDER BY m.item_name ASC
+            LIMIT ? OFFSET ?
+          `;
+
+          const [rows] = await db.execute(sql, [like, like, like, limit, offset]);
+
+          // count total (simple count query)
+          const countSql = `
+            SELECT COUNT(*) as total
+            FROM menu m
+            JOIN restaurants r ON m.restaurant_id = r.id
+            WHERE LOWER(m.item_name) LIKE ?
+               OR LOWER(m.category) LIKE ?
+               OR LOWER(r.name) LIKE ?
+          `;
+          const [countRows] = await db.execute(countSql, [like, like, like]);
+          const total = (countRows && countRows[0] && countRows[0].total) || 0;
+
+          res.json({ results: rows, total });
+        } catch (err) {
+          console.error('Search error:', err);
+          res.status(500).json({ error: 'Search failed' });
+        }
+      });
       return res.json(fallback);
     } catch (fallbackErr) {
       console.error("Restaurants fallback failed:", fallbackErr.message);
@@ -1054,68 +1096,6 @@ app.get("/api/orders/restaurant/:restaurantId", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch restaurant orders" });
   }
 });
-
-
-// ====== MAPPLS TOKEN ======
-// Returns the full token payload from Mappls (access_token, token_type, expires_in, etc.)
-// Configure credentials via env: MAPPLS_CLIENT_ID, MAPPLS_CLIENT_SECRET
-// Falls back to provided values if env vars are not set.
-app.get("/api/restaurants", async (req, res) => {
-  try {
-    const [results] = await db.execute(
-      `SELECT r.*, 
-         (SELECT ROUND(AVG(rv.rating),1) FROM reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
-         (SELECT COUNT(*) FROM reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
-       FROM restaurants r
-       WHERE r.status='approved'`
-    );
-    res.json(results);
-  } catch (err) {
-    console.error('Error fetching restaurants:', err.message);
-    try {
-      const fallback = await fetchFallbackRestaurantCards(20);
-      return res.json(fallback);
-    } catch (fallbackErr) {
-      console.error('Restaurants fallback failed:', fallbackErr.message);
-    }
-    res.status(500).json({ error: "DB error" });
-  }
-});
-// ✅ Reverse Geocoding using Mappls API
-app.get("/api/reverse-geocode", async (req, res) => {
-  try {
-    const { lat, lng } = req.query;
-    if (!lat || !lng) {
-      return res.status(400).json({ error: "Missing lat/lng" });
-    }
-
-    // 🔑 Replace YOUR_MAPPLS_API_KEY with your actual Mappls REST API key
-    const apiKey = process.env.MAPPLS_API_KEY || "522d3498e3667eac0fc7f509c00ac75a";
-    const url = `https://apis.mappls.com/advancedmaps/v1/${apiKey}/rev_geocode?lat=${lat}&lng=${lng}`;
-
-    const response = await fetch(url);
-    const data = await response.json();
-
-    if (!data || !data.results || !data.results[0]) {
-      throw new Error("Invalid response from Mappls API");
-    }
-
-    const place = data.results[0];
-    res.json({
-      formatted_address: place.formatted_address || place.address,
-      area: place.area || null,
-      city: place.city || null,
-      district: place.district || null,
-      state: place.state || null,
-      pincode: place.pincode || null,
-    });
-  } catch (err) {
-    console.error("Reverse geocode error (Mappls):", err.message);
-    res.status(500).json({ error: "Failed to reverse geocode with Mappls" });
-  }
-});
-
-
 // ---- Fetch all menus for a restaurant ----
 app.get("/api/restaurant/:id/menu", async (req, res) => {
   const restaurantId = req.params.id;
@@ -1228,10 +1208,7 @@ app.delete('/api/menu/:id', authMiddleware, async (req, res) => {
     res.status(500).json({ error: 'Failed to delete menu item' });
   }
 });
-// Root should serve the app homepage from 'frotend'
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "..", "frotend", "index.html"));
-});
+// Root should serve the app homepage from 'frontend
 
 // ====== Featured Restaurants ======
 // ====== Homepage Popup Banners ======
@@ -1280,8 +1257,8 @@ app.get("/api/featured-restaurants", async (req, res) => {
   try {
     const [results] = await db.execute(`
       SELECT fr.*, r.name, r.cuisine, r.image_url AS image_url, r.status as restaurant_status,
-             (SELECT ROUND(AVG(rv.rating),1) FROM reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
-             (SELECT COUNT(*) FROM reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
+             (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
+             (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
       FROM featured_restaurants fr 
       JOIN restaurants r ON fr.restaurant_id = r.id 
       ORDER BY fr.position ASC
@@ -1406,8 +1383,10 @@ app.put("/api/admin/featured-restaurants/:id/toggle", async (req, res) => {
   } catch (err) {
     console.error("Error toggling featured restaurant (admin):", err);
     res.status(500).json({ error: "Failed to toggle featured restaurant" });
+  
   }
 });
+
 app.delete("/api/admin/featured-restaurants/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -1424,8 +1403,8 @@ app.get("/api/top-restaurants", async (req, res) => {
   try {
     const [results] = await db.execute(`
       SELECT tr.*, r.name, r.cuisine, r.image_url AS image_url, r.status as restaurant_status,
-             (SELECT ROUND(AVG(rv.rating),1) FROM reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
-             (SELECT COUNT(*) FROM reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
+             (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
+             (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
       FROM top_restaurants tr 
       JOIN restaurants r ON tr.restaurant_id = r.id 
       ORDER BY tr.position ASC
@@ -1565,10 +1544,10 @@ app.post('/api/orders/:orderId/review', async (req, res) => {
     if (!orders.length) return res.status(404).json({ error: 'Order not found' });
     const ord = orders[0];
     // Enforce one review per order
-    const [exists] = await db.execute('SELECT id FROM reviews WHERE order_id = ? LIMIT 1', [orderId]);
+  const [exists] = await db.execute('SELECT id FROM restaurant_reviews WHERE order_id = ? LIMIT 1', [orderId]);
     if (exists.length) return res.status(409).json({ error: 'Review already submitted for this order' });
     await db.execute(
-      'INSERT INTO reviews (order_id, user_id, restaurant_id, rating, comment) VALUES (?,?,?,?,?)',
+  'INSERT INTO restaurant_reviews (order_id, user_id, restaurant_id, rating, comment) VALUES (?,?,?,?,?)',
       [orderId, ord.user_id || null, ord.restaurant_id, Math.round(rating), comment || null]
     );
     res.json({ message: 'Thanks for your review!' });
@@ -1583,7 +1562,7 @@ app.get('/api/restaurants/:id/reviews/summary', async (req, res) => {
   try {
     const rid = Number(req.params.id);
     const [[row]] = await db.execute(
-      'SELECT ROUND(AVG(rating),1) AS avg, COUNT(*) AS count FROM reviews WHERE restaurant_id = ?',
+  'SELECT ROUND(AVG(rating),1) AS avg, COUNT(*) AS count FROM restaurant_reviews WHERE restaurant_id = ?',
       [rid]
     );
     res.json({ avg: row?.avg || null, count: row?.count || 0 });
@@ -1636,12 +1615,12 @@ app.post("/api/admin/orders/:orderId/assign", async (req, res) => {
     }
 
     // Fetch restaurant coordinates
-    const [restRows] = await db.execute("SELECT lat, lng FROM restaurants WHERE id = ?", [restaurant_id]);
-    if (!restRows.length || restRows[0].lat == null || restRows[0].lng == null) {
+    const [restRows] = await db.execute("SELECT latitude, longitude FROM restaurants WHERE id = ?", [restaurant_id]);
+    if (!restRows.length || restRows[0].latitude == null || restRows[0].longitude == null) {
       return res.status(400).json({ error: "Restaurant location unavailable" });
     }
-    const rlat = Number(restRows[0].lat);
-    const rlng = Number(restRows[0].lng);
+    const rlat = Number(restRows[0].latitude);
+    const rlng = Number(restRows[0].longitude);
 
     // Fetch active agents with coordinates
     const [agents] = await db.execute(
@@ -1921,10 +1900,307 @@ io.on("connection", (socket) => {
 
 // ✅ Catch-all route (Express 5 safe): serve SPA index for any unmatched request
 // Static middleware above will handle real files first; this ensures client-side routing works.
-app.use((req, res, next) => {
-  res.sendFile(path.join(__dirname, "..", "frotend", "index.html"));
+// ========== ADMIN DASHBOARD ROUTES ==========
+// ✅ Featured restaurants (admin view)
+app.get("/api/admin/featured-restaurants", async (req, res) => {
+  try {
+    const [rows] = await db.execute(`
+      SELECT
+        r.id,
+        r.name,
+        r.cuisine,
+        r.image_url,
+        (SELECT ROUND(AVG(rr.rating),1) FROM restaurant_reviews rr WHERE rr.restaurant_id = r.id) AS rating,
+        EXISTS(SELECT 1 FROM featured_restaurants fr WHERE fr.restaurant_id = r.id) AS is_featured
+      FROM restaurants r
+      WHERE r.status = 'approved'
+      ORDER BY r.created_at DESC
+      LIMIT 8
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error("Error fetching featured restaurants:", err.message);
+    res.status(500).json({ error: "Failed to fetch featured restaurants" });
+  }
 });
 
-server.listen(process.env.PORT || 5000, () => {
-  console.log(`Server running on port ${process.env.PORT || 5000}`);
+// ✅ Top restaurants (highest rated)
+app.get("/api/admin/top-restaurants", async (req, res) => {
+  try {
+    const [rows] = await db.execute(`
+      SELECT
+        r.id,
+        r.name,
+        r.cuisine,
+        r.image_url,
+        (SELECT ROUND(AVG(rr.rating),1) FROM restaurant_reviews rr WHERE rr.restaurant_id = r.id) AS avg_rating
+      FROM restaurants r
+      WHERE r.status = 'approved'
+      ORDER BY avg_rating DESC
+      LIMIT 10
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error("Error fetching top restaurants:", err.message);
+    res.status(500).json({ error: "Failed to fetch top restaurants" });
+  }
+});
+
+// ✅ Dashboard stats
+app.get("/api/admin/stats", async (req, res) => {
+  try {
+    const [[users]] = await db.execute(`SELECT COUNT(*) AS total_users FROM users`);
+    const [[restaurants]] = await db.execute(`SELECT COUNT(*) AS total_restaurants FROM restaurants`);
+    const [[orders]] = await db.execute(`SELECT COUNT(*) AS total_orders FROM orders`);
+
+    res.json({
+      users: users.total_users,
+      restaurants: restaurants.total_restaurants,
+      orders: orders.total_orders,
+    });
+  } catch (err) {
+    console.error("Error loading admin stats:", err.message);
+    res.status(500).json({ error: "Failed to load dashboard stats" });
+  }
+});
+// ===================== ADMIN DASHBOARD ROUTES =====================
+
+// Featured Restaurants
+app.get("/api/admin/featured-restaurants", async (req, res) => {
+  try {
+    const [rows] = await db.execute(`
+      SELECT id, name, cuisine, image_url, rating
+      FROM restaurants
+      WHERE status = 'approved'
+      ORDER BY created_at DESC
+      LIMIT 6
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error("Error fetching featured restaurants:", err.message);
+    res.status(500).json({ error: "Failed to fetch featured restaurants" });
+  }
+});
+
+// Top Restaurants
+app.get("/api/admin/top-restaurants", async (req, res) => {
+  try {
+    const [rows] = await db.execute(`
+      SELECT r.id, r.name, r.cuisine, r.image_url,
+             ROUND(AVG(rv.rating),1) AS avg_rating,
+             COUNT(rv.id) AS rating_count
+      FROM restaurants r
+      LEFT JOIN reviews rv ON rv.restaurant_id = r.id
+      WHERE r.status = 'approved'
+      GROUP BY r.id
+      ORDER BY avg_rating DESC
+      LIMIT 10
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error("Error fetching top restaurants:", err.message);
+    res.status(500).json({ error: "Failed to fetch top restaurants" });
+  }
+});
+
+// Dashboard Stats
+app.get("/api/admin/stats", async (req, res) => {
+  try {
+    const [[userCount]] = await db.execute("SELECT COUNT(*) AS total_users FROM users");
+    const [[restCount]] = await db.execute("SELECT COUNT(*) AS total_restaurants FROM restaurants");
+    const [[orderCount]] = await db.execute("SELECT COUNT(*) AS total_orders FROM orders");
+
+    res.json({
+      users: userCount.total_users,
+      restaurants: restCount.total_restaurants,
+      orders: orderCount.total_orders
+    });
+  } catch (err) {
+    console.error("Error fetching dashboard stats:", err.message);
+    res.status(500).json({ error: "Failed to load admin stats" });
+  }
+});
+
+
+// Global error handler: catch PathError and other unexpected errors
+app.use((err, req, res, next) => {
+  try {
+    if (!err) return next();
+    // Known path/parameter errors -> 400 Bad Request
+    if (err.name === 'PathError' || err instanceof Error && err.name === 'PathError') {
+      console.warn('PathError handled:', err.message);
+      return res.status(400).json({ error: err.message });
+    }
+    // For other errors, log and return generic 500 (include message in dev)
+    console.error('Unhandled error:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ error: 'Internal server error' });
+  } catch (handlerErr) {
+    console.error('Error in error-handler:', handlerErr);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ✅ Serve frontend build (HTML, CSS, JS)
+app.use(express.static(path.join(__dirname, '../frontend')));
+
+// ✅ SPA fallback route (handles all unknown frontend routes safely)
+// Use a RegExp path to avoid the path-to-regexp '*' parsing error in newer versions
+
+// ===== Convenience endpoint: get restaurants with coordinates =====
+// Returns id, name, latitude, longitude (aliases for lat/lng) for admin map loaders
+app.get('/api/get-restaurants', authMiddleware, async (req, res) => {
+  try {
+    // Only admins may fetch all restaurants for the admin map
+    const user = req.user || {};
+    if (user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+
+    // Use COALESCE to support both lat/lng or latitude/longitude column names
+    const [rows] = await db.execute(`
+      SELECT 
+        id, 
+        name, 
+        COALESCE(lat, latitude) AS latitude, 
+        COALESCE(lng, longitude) AS longitude
+      FROM restaurants
+      ORDER BY id ASC
+    `);
+
+    return res.json(
+      rows.map(r => ({
+        id: r.id,
+        name: r.name,
+        latitude: r.latitude == null ? null : Number(r.latitude),
+        longitude: r.longitude == null ? null : Number(r.longitude)
+      }))
+    );
+  } catch (err) {
+    console.error('Error fetching restaurants for map:', err?.message || err);
+    return res.status(500).json({ error: 'Failed to fetch restaurants' });
+  }
+});
+
+
+
+// ===== Update restaurant location =====
+app.post('/api/update-restaurant-location', authMiddleware, async (req, res) => {
+  try {
+    const { restaurant_id, latitude, longitude } = req.body || {};
+    if (!restaurant_id || typeof latitude === 'undefined' || typeof longitude === 'undefined') {
+      return res.status(400).json({ message: 'Missing data' });
+    }
+
+    // Authorization: admins can update any restaurant; restaurant users can only update their own
+    const user = req.user || {};
+    if (user.role !== 'admin') {
+      if (user.role !== 'restaurant' || Number(user.restaurant_id) !== Number(restaurant_id)) {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+    }
+
+    // Use latitude/longitude column names in DB
+    const lat = Number(latitude);
+    const lng = Number(longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return res.status(400).json({ message: 'Invalid latitude or longitude' });
+    }
+
+    await db.execute(
+      `UPDATE restaurants SET latitude = ?, longitude = ? WHERE id = ?`,
+      [lat, lng, restaurant_id]
+    );
+
+    return res.json({ message: 'Restaurant location updated successfully' });
+  } catch (err) {
+    console.error('Error updating location:', err?.message || err);
+    return res.status(500).json({ message: 'Database error', details: err?.message || String(err) });
+  }
+});
+
+app.all(/.*/, (req, res) => {
+  res.sendFile(path.join(__dirname, '../frontend/index.html'));
+});
+app.get('/api/agent-route/:agentId', authMiddleware, async (req, res) => {
+  try {
+    const { agentId } = req.params;
+
+    // Fetch agent info
+    const [agentRows] = await db.query(
+      'SELECT latitude AS agent_lat, longitude AS agent_lng, current_order_id FROM delivery_agents WHERE id = ?',
+      [agentId]
+    );
+    if (!agentRows.length) return res.status(404).json({ error: 'Agent not found' });
+    const { agent_lat, agent_lng, current_order_id } = agentRows[0];
+
+    if (!current_order_id)
+      return res.status(404).json({ error: 'No active order assigned' });
+
+    // Fetch order info
+    const [orderRows] = await db.query(
+      'SELECT restaurant_id, delivery_lat, delivery_lng FROM orders WHERE id = ?',
+      [current_order_id]
+    );
+    if (!orderRows.length) return res.status(404).json({ error: 'Order not found' });
+    const { restaurant_id, delivery_lat, delivery_lng } = orderRows[0];
+
+    // Fetch restaurant info
+    const [restRows] = await db.query(
+      'SELECT latitude AS rest_lat, longitude AS rest_lng FROM restaurants WHERE id = ?',
+      [restaurant_id]
+    );
+    if (!restRows.length) return res.status(404).json({ error: 'Restaurant not found' });
+    const { rest_lat, rest_lng } = restRows[0];
+
+    // Return full route info
+    return res.json({
+      agent: { lat: Number(agent_lat), lng: Number(agent_lng) },
+      restaurant: { lat: Number(rest_lat), lng: Number(rest_lng) },
+      user: { lat: Number(delivery_lat), lng: Number(delivery_lng) },
+      order_id: current_order_id
+    });
+  } catch (err) {
+    console.error('Agent route error:', err);
+    res.status(500).json({ error: 'Failed to fetch route details' });
+  }
+});
+app.get('/api/delivery/:agentId/orders', async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const [orders] = await db.query(`
+      SELECT o.id, o.restaurant_id, o.delivery_lat, o.delivery_lng, o.status,
+             u.phone AS customer_phone, u.name AS customer_name
+      FROM orders o
+      LEFT JOIN users u ON o.user_id = u.id
+      WHERE o.agent_id = ?
+      ORDER BY o.id DESC
+    `, [agentId]);
+    res.json(orders);
+  } catch (err) {
+    console.error('Fetch delivery orders failed:', err);
+    res.status(500).json({ error: 'Failed to fetch delivery orders' });
+  }
+});
+// NOTE: Removed stray frontend/browser code that referenced `socket`, `window`, and
+// functions like `updateMap`/`drawDeliveryRoute`. Those are client-side and
+// must not be present in the server bundle. If you need server-side socket
+// handlers, wire them using the `io` object created around the HTTP server.
+app.get('/api/restaurants', async (req, res) => {
+  const [rows] = await db.execute(`
+    SELECT id, name, 
+           COALESCE(latitude, lat) AS lat, 
+           COALESCE(longitude, lng) AS lng
+    FROM restaurants
+  `);
+  res.json(rows);
+});
+
+
+
+// Note: PathError-aware handler is registered earlier; no additional generic handler needed here.
+
+// ✅ Start server
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, () => {
+  console.log(`🚀 Tindo backend running successfully on port ${PORT}`);
+  console.log(`📦 Serving frontend from ../frontend`);
+  console.log(`🖼️  Uploads available at /uploads`);
 });

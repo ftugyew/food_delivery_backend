@@ -208,3 +208,18 @@ CREATE TABLE IF NOT EXISTS banners (
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Restaurant reviews table (replaces legacy `reviews`)
+CREATE TABLE IF NOT EXISTS restaurant_reviews (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    order_id INT NOT NULL,
+    user_id INT NULL,
+    restaurant_id INT NOT NULL,
+    rating TINYINT NOT NULL,
+    comment TEXT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_order (order_id),
+    INDEX idx_restaurant (restaurant_id),
+    FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+    FOREIGN KEY (restaurant_id) REFERENCES restaurants(id) ON DELETE CASCADE
+);
