@@ -2041,7 +2041,7 @@ app.use((err, req, res, next) => {
 });
 
 // ✅ Serve frontend build (HTML, CSS, JS)
-app.use(express.static(path.join(__dirname, '../frontend')));
+//app.use(express.static(path.join(__dirname, '../frontend')));
 
 // ✅ SPA fallback route (handles all unknown frontend routes safely)
 // Use a RegExp path to avoid the path-to-regexp '*' parsing error in newer versions
@@ -2116,8 +2116,8 @@ app.post('/api/update-restaurant-location', authMiddleware, async (req, res) => 
   }
 });
 
-app.all(/.*/, (req, res) => {
-  res.sendFile(path.join(__dirname, '../frontend/index.html'));
+//app.all(/.*/, (req, res) => {
+  //res.sendFile(path.join(__dirname, '../frontend/index.html'));
 });
 app.get('/api/agent-route/:agentId', authMiddleware, async (req, res) => {
   try {
@@ -2201,6 +2201,6 @@ app.get('/api/restaurants', async (req, res) => {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`🚀 Tindo backend running successfully on port ${PORT}`);
-  console.log(`📦 Serving frontend from ../frontend`);
+  //console.log(`📦 Serving frontend from ../frontend`);
   console.log(`🖼️  Uploads available at /uploads`);
 });

@@ -6,13 +6,14 @@ dotenv.config();
 
 // Create database connection pool for better performance
 const db = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASS || '',
-  database: process.env.DB_NAME || 'food_delivery',
+  host: process.env.DB_HOST,
+  port: process.env.DB_PORT,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASS,
+  database: process.env.DB_NAME,
   waitForConnections: true,
   connectionLimit: 10,
-  queueLimit: 0
+  queueLimit: 0,
 });
 
 // Test the connection
@@ -25,6 +26,9 @@ const testConnection = async () => {
     console.error('❌ MySQL connection error:', error.message);
   }
 };
+ssl: {
+  rejectUnauthorized: true
+}
 
 // Initialize connection test
 testConnection();
