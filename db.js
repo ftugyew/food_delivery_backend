@@ -1,36 +1,31 @@
-const mysql = require('mysql2/promise');
-const dotenv = require('dotenv');
+const mysql = require("mysql2/promise");
+const dotenv = require("dotenv");
 
-// Load environment variables
 dotenv.config();
 
-// Create database connection pool for better performance
 const db = mysql.createPool({
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASS,
-  database: process.env.DB_NAME,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
+  host: process.env.MYSQLHOST,
+  port: process.env.MYSQLPORT,
+  user: process.env.MYSQLUSER,
+  password: process.env.MYSQLPASSWORD,
+  database: process.env.MYSQLDATABASE,
+  ssl: {
+    require: true,
+    rejectUnauthorized: false
+  },
+  connectTimeout: 20000 // 20 seconds timeout
 });
 
-// Test the connection
 const testConnection = async () => {
   try {
     const connection = await db.getConnection();
-    console.log('✅ MySQL connected successfully');
+    console.log("✅ Railway MySQL Connected Successfully");
     connection.release();
-  } catch (error) {
-    console.error('❌ MySQL connection error:', error.message);
+  } catch (err) {
+    console.error("❌ MySQL Connect Error:", err.code);
   }
 };
-ssl: {
-  rejectUnauthorized: true
-}
 
-// Initialize connection test
 testConnection();
 
 module.exports = db;
