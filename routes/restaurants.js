@@ -3,20 +3,26 @@ const db = require("../db");
 const router = express.Router();
 
 // Add restaurant
-router.post("/", (req, res) => {
-  const { name, description, lat, lng, address, phone, email, image_url, rating, eta, cuisine } = req.body;
+router.post("/", async (req, res) => {
+  try {
+    const { name, description, lat, lng, address, phone, email, image_url, rating, eta, cuisine } = req.body;
 
-  db.execute(
-    "INSERT INTO restaurants (name, description, lat, lng, address, phone, email, image_url, rating, eta, cuisine, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')",
-    [name, description, lat, lng, address, phone, email, image_url, rating, eta, cuisine]
-  )
-    .then(([result]) => {
-      res.json({ message: "Restaurant added", id: result.insertId });
-    })
-    .catch((err) => {
-      console.error("Add restaurant error:", err.sqlMessage || err);
-      res.status(500).json({ error: "Failed to add restaurant" });
-    });
+    const sql = `
+      INSERT INTO restaurants (
+        name, description, lat, lng, address, phone, email, image_url, rating, eta, cuisine, status
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+    `;
+
+    const [result] = await db.execute(sql, [
+      name, description, lat, lng, address, phone, email, image_url, rating, eta, cuisine
+    ]);
+
+    res.json({ message: "Restaurant added", id: result.insertId });
+  } catch (err) {
+    console.error("Add restaurant error:", err.sqlMessage || err);
+    res.status(500).json({ error: "Failed to add restaurant" });
+  }
 });
 
 // Get all restaurants
