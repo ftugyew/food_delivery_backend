@@ -55,7 +55,7 @@ const io = new Server(server, { cors: { origin: "*" } });
 // ===== Middleware =====
 app.use(bodyParser.json());
 app.use(express.json());
-app.use("/api/reviews", require("./routes/reviews"));
+app.use("/api/restaurants", require("./routes/reviews"));
 
 const allowedOrigins = ["https://food-ameerpet.vercel.app/"];
 app.use(cors({
