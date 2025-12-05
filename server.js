@@ -154,8 +154,8 @@ app.get("/api/featured-restaurants", async (req, res) => {
   try {
     const [results] = await db.execute(`
       SELECT fr.*, r.name, r.cuisine, r.image_url AS image_url, r.status as restaurant_status,
-             (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
-             (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
+             //(SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
+             //(SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
       FROM featured_restaurants fr
       JOIN restaurants r ON fr.restaurant_id = r.id
       ORDER BY fr.position ASC
@@ -194,8 +194,8 @@ app.get("/api/top-restaurants", async (req, res) => {
   try {
     const [results] = await db.execute(`
       SELECT tr.*, r.name, r.cuisine, r.image_url AS image_url, r.status as restaurant_status,
-             (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
-             (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
+             //(SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
+             //(SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
       FROM top_restaurants tr
       JOIN restaurants r ON tr.restaurant_id = r.id
       ORDER BY tr.position ASC
@@ -234,8 +234,8 @@ app.get("/api/restaurants", async (req, res) => {
   try {
     const [results] = await db.execute(`
       SELECT r.*,
-             (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
-             (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
+             //(SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
+             //(SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
       FROM restaurants r
       WHERE r.status='approved'
     `);
@@ -387,10 +387,10 @@ app.post("/api/orders/:orderId/review", async (req, res) => {
     );
     if (!orders.length) return res.status(404).json({ error: "Order not found" });
     const ord = orders[0];
-  const [exists] = await db.execute("SELECT id FROM restaurant_reviews WHERE order_id = ? LIMIT 1", [orderId]);
+  //const [exists] = await db.execute("SELECT id FROM restaurant_reviews WHERE order_id = ? LIMIT 1", [orderId]);
     if (exists.length) return res.status(409).json({ error: "Review already submitted for this order" });
     await db.execute(
-  "INSERT INTO restaurant_reviews (order_id, user_id, restaurant_id, rating, comment) VALUES (?,?,?,?,?)",
+  //"INSERT INTO restaurant_reviews (order_id, user_id, restaurant_id, rating, comment) VALUES (?,?,?,?,?)",
       [orderId, ord.user_id || null, ord.restaurant_id, Math.round(rating), comment || null]
     );
     return res.json({ message: "Thanks for your review!" });
@@ -403,7 +403,7 @@ app.get("/api/restaurants/:id/reviews/summary", async (req, res) => {
   try {
     const rid = Number(req.params.id);
     const [[row]] = await db.execute(
-  "SELECT ROUND(AVG(rating),1) AS avg, COUNT(*) AS count FROM restaurant_reviews WHERE restaurant_id = ?",
+  //"SELECT ROUND(AVG(rating),1) AS avg, COUNT(*) AS count FROM restaurant_reviews WHERE restaurant_id = ?",
       [rid]
     );
     return res.json({ avg: row?.avg || null, count: row?.count || 0 });
@@ -600,7 +600,7 @@ if (authMiddleware) {
 
 app.get('/api/featured-restaurants', async (req, res) => {
   try {
-  const [results] = await db.execute(`SELECT fr.*, r.name, r.cuisine, r.image_url AS image_url, r.status as restaurant_status, (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating, (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count FROM featured_restaurants fr JOIN restaurants r ON fr.restaurant_id = r.id ORDER BY fr.position ASC`);
+  //const [results] = await db.execute(`SELECT fr.*, r.name, r.cuisine, r.image_url AS image_url, r.status as restaurant_status, (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating, (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count FROM featured_restaurants fr JOIN restaurants r ON fr.restaurant_id = r.id ORDER BY fr.position ASC`);
     return res.json(results);
   } catch (err) {
     console.error('Error fetching featured restaurants:', err?.message || err);
@@ -612,7 +612,7 @@ app.get('/api/featured-restaurants', async (req, res) => {
 // Top
 app.get('/api/top-restaurants', async (req, res) => {
   try {
-  const [results] = await db.execute(`SELECT tr.*, r.name, r.cuisine, r.image_url AS image_url, r.status as restaurant_status, (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating, (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count FROM top_restaurants tr JOIN restaurants r ON tr.restaurant_id = r.id ORDER BY tr.position ASC`);
+  //const [results] = await db.execute(`SELECT tr.*, r.name, r.cuisine, r.image_url AS image_url, r.status as restaurant_status, (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating, (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count FROM top_restaurants tr JOIN restaurants r ON tr.restaurant_id = r.id ORDER BY tr.position ASC`);
     return res.json(results);
   } catch (err) {
     console.error('Error fetching top restaurants:', err?.message || err);
@@ -624,7 +624,7 @@ app.get('/api/top-restaurants', async (req, res) => {
 // Restaurants list
 app.get('/api/restaurants', async (req, res) => {
   try {
-  const [results] = await db.execute(`SELECT r.*, (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating, (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count FROM restaurants r WHERE r.status='approved'`);
+  //const [results] = await db.execute(`SELECT r.*, (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating, (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count FROM restaurants r WHERE r.status='approved'`);
     return res.json(results);
   } catch (err) {
     console.error('Error fetching restaurants:', err?.message || err);
@@ -656,10 +656,10 @@ app.post('/api/orders/:orderId/review', async (req, res) => {
     const [orders] = await db.execute('SELECT id, user_id, restaurant_id, status FROM orders WHERE id = ? LIMIT 1', [orderId]);
     if (!orders.length) return res.status(404).json({ error: 'Order not found' });
     const ord = orders[0];
-  const [exists] = await db.execute('SELECT id FROM restaurant_reviews WHERE order_id = ? LIMIT 1', [orderId]);
+  /*const [exists] = await db.execute('SELECT id FROM restaurant_reviews WHERE order_id = ? LIMIT 1', [orderId]);
     if (exists.length) return res.status(409).json({ error: 'Review already submitted for this order' });
   await db.execute('INSERT INTO restaurant_reviews (order_id, user_id, restaurant_id, rating, comment) VALUES (?,?,?,?,?)', [orderId, ord.user_id || null, ord.restaurant_id, Math.round(rating), comment || null]);
-    return res.json({ message: 'Thanks for your review!' });
+    return res.json({ message: 'Thanks for your review!' });*/
   } catch (err) {
     console.error('Review submit error:', err?.message || err);
     return res.status(500).json({ error: 'Failed to submit review' });
@@ -963,8 +963,8 @@ app.get("/api/restaurants", async (req, res) => {
     const [results] = await db.execute(`
       SELECT 
         r.*,
-        (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
-          (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
+        //(SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
+         // (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
       FROM restaurants r
       WHERE r.status='approved'
     `);
@@ -1253,8 +1253,8 @@ app.get("/api/featured-restaurants", async (req, res) => {
   try {
     const [results] = await db.execute(`
       SELECT fr.*, r.name, r.cuisine, r.image_url AS image_url, r.status as restaurant_status,
-             (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
-             (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
+             //(SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
+             //(SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
       FROM featured_restaurants fr 
       JOIN restaurants r ON fr.restaurant_id = r.id 
       ORDER BY fr.position ASC
@@ -1399,8 +1399,8 @@ app.get("/api/top-restaurants", async (req, res) => {
   try {
     const [results] = await db.execute(`
       SELECT tr.*, r.name, r.cuisine, r.image_url AS image_url, r.status as restaurant_status,
-             (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
-             (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
+             //(SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
+             //(SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
       FROM top_restaurants tr 
       JOIN restaurants r ON tr.restaurant_id = r.id 
       ORDER BY tr.position ASC
@@ -1540,7 +1540,7 @@ app.post('/api/orders/:orderId/review', async (req, res) => {
     if (!orders.length) return res.status(404).json({ error: 'Order not found' });
     const ord = orders[0];
     // Enforce one review per order
-  const [exists] = await db.execute('SELECT id FROM restaurant_reviews WHERE order_id = ? LIMIT 1', [orderId]);
+  /*const [exists] = await db.execute('SELECT id FROM restaurant_reviews WHERE order_id = ? LIMIT 1', [orderId]);
     if (exists.length) return res.status(409).json({ error: 'Review already submitted for this order' });
     await db.execute(
   'INSERT INTO restaurant_reviews (order_id, user_id, restaurant_id, rating, comment) VALUES (?,?,?,?,?)',
@@ -1549,12 +1549,11 @@ app.post('/api/orders/:orderId/review', async (req, res) => {
     res.json({ message: 'Thanks for your review!' });
   } catch (err) {
     console.error('Review submit error:', err);
-    res.status(500).json({ error: 'Failed to submit review' });
+    res.status(500).json({ error: 'Failed to submit review' });*/
   }
-});
 
 // Get rating summary for a restaurant
-app.get('/api/restaurants/:id/reviews/summary', async (req, res) => {
+/*app.get('/api/restaurants/:id/reviews/summary', async (req, res) => {
   try {
     const rid = Number(req.params.id);
     const [[row]] = await db.execute(
@@ -1566,7 +1565,7 @@ app.get('/api/restaurants/:id/reviews/summary', async (req, res) => {
     console.error('Review summary error:', err);
     res.status(500).json({ error: 'Failed to fetch review summary' });
   }
-});
+});*/
 
 // ===== Admin: Orders and Delivery =====
 // Get all orders (admin overview)
@@ -1906,7 +1905,7 @@ app.get("/api/admin/featured-restaurants", async (req, res) => {
         r.name,
         r.cuisine,
         r.image_url,
-        (SELECT ROUND(AVG(rr.rating),1) FROM restaurant_reviews rr WHERE rr.restaurant_id = r.id) AS rating,
+        //(SELECT ROUND(AVG(rr.rating),1) FROM restaurant_reviews rr WHERE rr.restaurant_id = r.id) AS rating,
         EXISTS(SELECT 1 FROM featured_restaurants fr WHERE fr.restaurant_id = r.id) AS is_featured
       FROM restaurants r
       WHERE r.status = 'approved'
@@ -1929,7 +1928,7 @@ app.get("/api/admin/top-restaurants", async (req, res) => {
         r.name,
         r.cuisine,
         r.image_url,
-        (SELECT ROUND(AVG(rr.rating),1) FROM restaurant_reviews rr WHERE rr.restaurant_id = r.id) AS avg_rating
+        //(SELECT ROUND(AVG(rr.rating),1) FROM restaurant_reviews rr WHERE rr.restaurant_id = r.id) AS avg_rating
       FROM restaurants r
       WHERE r.status = 'approved'
       ORDER BY avg_rating DESC
