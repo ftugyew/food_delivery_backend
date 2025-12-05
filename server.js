@@ -92,10 +92,7 @@ app.use(express.json());
 
 
 const allowedOrigins = [
-  "http://127.0.0.1:5500",
-  "http://localhost:5500",
-  "http://localhost:3000",   // React/Vite/Next.js dev servers
-  "http://127.0.0.1:3000"
+  "https://food-ameerpet.vercel.app/"
 ];
 
 app.use(
@@ -130,7 +127,7 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.get("/favicon.ico", (req, res) => res.status(204).end());
 
 // Helper: fallback restaurant cards when curated tables are missing
-fetch('http://localhost:5000/api/orders')
+fetch('https://food-delivery-backend-cw3m.onrender.com/api/orders')
   .then(response => response.json())
   .then(data => {
     console.log('Fetched orders:', data);
@@ -140,7 +137,7 @@ fetch('http://localhost:5000/api/orders')
   });
 
 function fallbackRestaurantCards(limit = 10) {
-  return fetch(`http://localhost:5000/api/restaurants?limit=${limit}`)
+  return fetch(`https://food-delivery-backend-cw3m.onrender.com/api/restaurants?limit=${limit}`)
     .then(response => response.json())
     .then(data => {
       console.log('Fetched fallback restaurant cards:', data);

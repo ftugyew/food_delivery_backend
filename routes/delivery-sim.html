@@ -9,7 +9,7 @@
 
   <script>
     async function sendLocation(lat, lng) {
-      await fetch("http://localhost:5000/api/agent-location", {
+      await fetch("https://food-delivery-backend-cw3m.onrender.com/api/agent-location", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ agent_id: 1, lat, lng })

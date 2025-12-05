@@ -3,7 +3,7 @@
 
 const axios = require('axios');
 
-const BASE = process.env.BASE_URL || 'http://localhost:5000';
+const BASE = process.env.BASE_URL || 'https://food-delivery-backend-cw3m.onrender.com';
 
 async function run() {
   try {
