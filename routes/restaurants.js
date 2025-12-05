@@ -2,20 +2,16 @@ const express = require("express");
 const db = require("../db");
 const router = express.Router();
 
-// Add restaurant (linked to user_id)
+// Add restaurant
 router.post("/", (req, res) => {
-  const { name, description, lat, lng, user_id } = req.body;
-
-  if (!user_id) {
-    return res.status(400).json({ error: "user_id required" });
-  }
+  const { name, description, lat, lng, address, phone, email, image_url, rating, eta, cuisine } = req.body;
 
   db.execute(
-    "INSERT INTO restaurants (name, description, lat, lng, user_id) VALUES (?, ?, ?, ?, ?)",
-    [name, description, lat, lng, user_id]
+    "INSERT INTO restaurants (name, description, lat, lng, address, phone, email, image_url, rating, eta, cuisine, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')",
+    [name, description, lat, lng, address, phone, email, image_url, rating, eta, cuisine]
   )
     .then(([result]) => {
-      res.json({ message: "✅ Restaurant added", id: result.insertId });
+      res.json({ message: "Restaurant added", id: result.insertId });
     })
     .catch((err) => {
       console.error("Add restaurant error:", err.sqlMessage || err);
@@ -24,35 +20,25 @@ router.post("/", (req, res) => {
 });
 
 // Get all restaurants
-router.get("/", (req, res) => {
-  db.execute("SELECT * FROM restaurants")
-    .then(([rows]) => res.json(rows))
-    .catch((err) => {
-      console.error("Fetch restaurants error:", err.sqlMessage || err);
-      res.status(500).json({ error: "Failed to fetch restaurants" });
-    });
-});
-
-// Get restaurants by owner (user_id)
-router.get("/owner/:userId", (req, res) => {
-  const { userId } = req.params;
-  db.execute("SELECT * FROM restaurants WHERE user_id = ?", [userId])
-    .then(([rows]) => res.json(rows))
-    .catch((err) => {
-      console.error("Fetch owner restaurants error:", err.sqlMessage || err);
-      res.status(500).json({ error: "Failed to fetch owner restaurants" });
-    });
-});
-// Get all restaurants
 router.get("/", async (req, res) => {
-  const [rows] = await db.execute("SELECT * FROM restaurants");
-  res.json(rows);
+  try {
+    const [rows] = await db.execute("SELECT * FROM restaurants WHERE status = 'active'");
+    res.json(rows);
+  } catch (err) {
+    console.error("Fetch restaurants error:", err.sqlMessage || err);
+    res.status(500).json({ error: "Failed to fetch restaurants" });
+  }
 });
 
 // Get one restaurant by ID
 router.get("/:id", async (req, res) => {
-  const [rows] = await db.execute("SELECT * FROM restaurants WHERE id = ?", [req.params.id]);
-  res.json(rows[0]);
+  try {
+    const [rows] = await db.execute("SELECT * FROM restaurants WHERE id = ?", [req.params.id]);
+    res.json(rows[0]);
+  } catch (err) {
+    console.error("Fetch restaurant by ID error:", err.sqlMessage || err);
+    res.status(500).json({ error: "Failed to fetch restaurant" });
+  }
 });
 
 module.exports = router;
