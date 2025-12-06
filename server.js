@@ -72,15 +72,11 @@ async function getMapplsToken() {
 
 
 
-// ===== Optional modular routes =====
-let authRoutes, authMiddleware,  paymentRoutes, trackingRoutes, userAddressesRoutes, deliveryRoutes;
-try { ({ router: authRoutes, authMiddleware } = require("./routes/auth")); } catch (_) {}
-
-try { paymentRoutes = require("./routes/payments"); } catch (_) {}
-try { trackingRoutes = require("./routes/tracking"); } catch (_) {}
-try { userAddressesRoutes = require("./routes/user-addresses"); } catch (_) {}
-try { deliveryRoutes = require("./routes/delivery"); } catch (_) {}
-
+// Optional routes (if files missing → ignore)
+try { app.use("/api/payments", require("./routes/payments")); } catch (_) {}
+try { app.use("/api/tracking", require("./routes/tracking")); } catch (_) {}
+try { app.use("/api/user-addresses", require("./routes/user-addresses")); } catch (_) {}
+try { app.use("/api/delivery", require("./routes/delivery")); } catch (_) {}
 if (typeof authMiddleware !== "function") {
   authMiddleware = (req, _res, next) => next();
 }
