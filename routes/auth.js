@@ -3,6 +3,7 @@ const express = require("express");
 const router = express.Router();
 const db = require("../db"); // your DB connection
 const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
 const multer = require("multer");
 const path = require("path");
 
@@ -65,6 +66,9 @@ router.post("/register", async (req, res) => {
       return res.status(400).json({ error: "Email already registered" });
     }
 
+    // Hash password using bcrypt
+    const passwordHash = await bcrypt.hash(password, 10);
+
     let restaurantId = null;
 
     // If restaurant → create restaurant entry too
@@ -90,10 +94,10 @@ router.post("/register", async (req, res) => {
       status = "pending"; // needs admin approval
     }
 
-    // Insert user
+    // Insert user with password_hash
     const [userResult] = await db.execute(
-      "INSERT INTO users (name, email, phone, password, role, restaurant_id, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [name, email, phone, password, role, restaurantId, status]
+      "INSERT INTO users (name, email, phone, password_hash, role, restaurant_id, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [name, email, phone, passwordHash, role, restaurantId, status]
     );
 
     const user = {
@@ -139,9 +143,26 @@ router.post("/register", async (req, res) => {
     // Only auto-login if approved
     if (status === "approved") {
       const token = generateToken(user);
-      return res.json({ token, user });
+      return res.json({ 
+        success: true,
+        token, 
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role
+        }
+      });
     } else {
-      return res.json({ message: "Registration submitted, pending admin approval", user });
+      return res.json({ 
+        message: "Registration submitted, pending admin approval", 
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role
+        }
+      });
     }
 
   } catch (err) {
@@ -175,6 +196,9 @@ router.post("/register-restaurant", upload.single("photo"), async (req, res) => 
       return res.status(400).json({ error: "Email already registered" });
     }
 
+    // Hash password using bcrypt
+    const passwordHash = await bcrypt.hash(password, 10);
+
     // Create restaurant entry with photo
     const imageUrl = req.file ? req.file.filename : null;
     const [result] = await db.execute(
@@ -184,10 +208,10 @@ router.post("/register-restaurant", upload.single("photo"), async (req, res) => 
     );
     const restaurantId = result.insertId;
 
-    // Insert user with restaurant_id
+    // Insert user with password_hash
     const [userResult] = await db.execute(
-      "INSERT INTO users (name, email, phone, password, role, restaurant_id, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
-      [name, email, phone, password, role, restaurantId]
+      "INSERT INTO users (name, email, phone, password_hash, role, restaurant_id, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
+      [name, email, phone, passwordHash, role, restaurantId]
     );
 
     const user = {
@@ -205,7 +229,12 @@ router.post("/register-restaurant", upload.single("photo"), async (req, res) => 
 
     res.json({ 
       message: "Restaurant registration submitted, pending admin approval", 
-      user 
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
     });
 
   } catch (err) {
@@ -222,17 +251,18 @@ router.post("/login", async (req, res) => {
       return res.status(400).json({ error: "Email and password required" });
     }
 
-    // Fetch user by email
+    // Fetch user by email only
     const [rows] = await db.execute("SELECT * FROM users WHERE email = ?", [email]);
     if (rows.length === 0) {
-      return res.status(401).json({ error: "Invalid credentials" });
+      return res.status(401).json({ error: "Invalid email or password" });
     }
 
     const user = rows[0];
 
-    // Check password (plain text for now as per requirement)
-    if (user.password !== password) {
-      return res.status(401).json({ error: "Invalid credentials" });
+    // Verify password using bcrypt
+    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+    if (!isPasswordValid) {
+      return res.status(401).json({ error: "Invalid email or password" });
     }
 
     // Role-based login logic with status checking
@@ -248,6 +278,7 @@ router.post("/login", async (req, res) => {
           
           if (restaurantStatus === 'pending') {
             return res.json({
+              success: false,
               status: "pending",
               role: "restaurant",
               message: "Waiting for admin approval",
@@ -261,6 +292,7 @@ router.post("/login", async (req, res) => {
             });
           } else if (restaurantStatus === 'rejected') {
             return res.json({
+              success: false,
               status: "rejected",
               role: "restaurant",
               message: "Your restaurant was rejected",
@@ -276,6 +308,7 @@ router.post("/login", async (req, res) => {
             // Generate token and return success
             const token = generateToken(user);
             return res.json({
+              success: true,
               status: "approved",
               role: "restaurant",
               redirectTo: "/restaurant-dashboard.html",
@@ -297,6 +330,7 @@ router.post("/login", async (req, res) => {
     if (normalizedRole === 'admin') {
       const token = generateToken(user);
       return res.json({
+        success: true,
         role: "admin",
         redirectTo: "/admin-dashboard.html",
         token,
@@ -313,6 +347,7 @@ router.post("/login", async (req, res) => {
     if (normalizedRole === 'delivery') {
       const token = generateToken(user);
       return res.json({
+        success: true,
         role: "delivery",
         redirectTo: "/delivery-dashboard.html",
         token,
@@ -328,6 +363,7 @@ router.post("/login", async (req, res) => {
     // Customer or unknown role: default behavior
     const token = generateToken(user);
     return res.json({
+      success: true,
       role: "customer",
       redirectTo: "/index.html",
       token,
