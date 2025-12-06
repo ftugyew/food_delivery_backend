@@ -34,7 +34,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions)); // Works now ✔
+app.options(/.*/, cors(corsOptions)); // Works now ✔
 
 // ===== Mappls Token Cache =====
 let mapplsToken = null;
