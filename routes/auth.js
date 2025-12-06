@@ -260,8 +260,9 @@ router.post("/register-restaurant", upload.single("photo"), async (req, res) => 
     res.status(500).json({ error: "Restaurant registration failed" });
   }
 });
-
 router.post("/login", async (req, res) => {
+  console.log("LOGIN req.body:", req.body); //
+
   try {
     console.log("📩 LOGIN REQUEST BODY:", req.body); // ⭐ LOG REQUEST DATA
 
