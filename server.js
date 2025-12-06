@@ -9,39 +9,32 @@ const path = require("path");
 const multer = require("multer");
 const axios = require("axios");
 const bcrypt = require("bcryptjs");
-const orderRoutes = orderRoutesFactory(io);
 dotenv.config();
 const db = require("./db");
 const app = express();
 const server = http.createServer(app);
 
-
-// Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// 🔹 Orders Routes AFTER io is defined
-const orderRoutesFactory = require("./routes/orders");
-
-app.use("/api/orders", orderRoutes);
-
-// 🔹 Auth Routes First
-const { router: authRoutes, authMiddleware } = require("./routes/auth");
-app.use("/api/auth", authRoutes);
-
-
-// ===== Middleware =====
-app.use(bodyParser.json());
-
-app.use("/api/restaurants", require("./routes/reviews"));
-
-
+// Initialize socket.io
 const io = new Server(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
   }
 });
+
+// ===== AUTH ROUTES FIRST =====
+const { router: authRoutes, authMiddleware } = require("./routes/auth");
+app.use("/api/auth", authRoutes);
+
+// ===== ORDER ROUTES AFTER io =====
+const orderRoutesFactory = require("./routes/orders");
+const orderRoutes = orderRoutesFactory(io);
+app.use("/api/orders", orderRoutes);
+// Middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+
 
 
 
