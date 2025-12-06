@@ -51,33 +51,33 @@ if (typeof authMiddleware !== "function") {
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
-const cors = require("cors");
 
-app.use(cors({
-  origin: ["https://food-ameerpet.vercel.app"],
-  methods: "GET,POST,PUT,DELETE",
-  credentials: true
-}));
+// ===== CORS Configuration =====
+const corsOptions = {
+  origin: (origin, callback) => {
+    const allowedOrigins = [
+      "https://food-ameerpet.vercel.app",
+      "http://localhost:3000",
+      "http://localhost:5000",
+    ];
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS not allowed"));
+    }
+  },
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true,
+};
 
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 
 // ===== Middleware =====
 app.use(bodyParser.json());
 app.use(express.json());
 app.use("/api/restaurants", require("./routes/reviews"));
-app.options("*", cors());
-
-
-const allowedOrigins = ["https://food-ameerpet.vercel.app/"];
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-    return callback(null, false);
-  },
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: true,
-}));
-app.options(/.*/, cors());
 
 // ===== Multer (uploads) =====
 const storage = multer.diskStorage({
