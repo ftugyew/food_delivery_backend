@@ -33,7 +33,7 @@ app.use(
   })
 );
 
-app.use(cors(corsOptions));
+
 app.options("*", cors(corsOptions));
 
 // ===== Mappls Token Cache =====
