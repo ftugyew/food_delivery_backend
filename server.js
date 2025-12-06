@@ -13,6 +13,28 @@ const bcrypt = require("bcryptjs");
 dotenv.config();
 const db = require("./db");
 
+const allowedOrigins = [
+  "https://food-ameerpet.vercel.app",
+  "http://localhost:3000"
+];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.log("❌ Blocked by CORS:", origin);
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE"]
+  })
+);
+
+
+
 // ===== Mappls Token Cache =====
 let mapplsToken = null;
 let tokenExpiry = 0;
@@ -35,8 +57,7 @@ async function getMapplsToken() {
   return mapplsToken;
 }
 
-// Must be BEFORE routes!
-app.options("*", cors());
+
 
 
 // ===== Optional modular routes =====
@@ -94,25 +115,6 @@ app.get("/api/mappls/token", async (req, res) => {
 });
 
 
-const allowedOrigins = [
-  "https://food-ameerpet.vercel.app",
-  "http://localhost:3000"
-];
-
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        console.log("❌ Blocked by CORS:", origin);
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE"]
-  })
-);
 
 
 
