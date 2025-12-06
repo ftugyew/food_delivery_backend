@@ -36,6 +36,16 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions)); // Works now ✔
 
+// 🔹 Auth Routes First
+const { router: authRoutes, authMiddleware } = require("./routes/auth");
+app.use("/api/auth", authRoutes);
+
+// 🔹 Orders Routes AFTER io is defined
+const orderRoutesFactory = require("./routes/orders");
+const orderRoutes = orderRoutesFactory(io);
+app.use("/api/orders", orderRoutes);
+
+
 // ===== Mappls Token Cache =====
 let mapplsToken = null;
 let tokenExpiry = 0;
@@ -58,9 +68,7 @@ async function getMapplsToken() {
   return mapplsToken;
 }
 
-const orderRoutesFactory = require("./routes/orders");
-const orderRoutes = orderRoutesFactory(io);
-app.use("/api/orders", orderRoutes);
+
 
 
 
@@ -80,8 +88,6 @@ if (typeof authMiddleware !== "function") {
 
 const io = new Server(server, { cors: { origin: "*" } });
 
-app.use("/api/auth", auth.router);
-app.use("/api/orders", ordersRoutes);
 
 
 
