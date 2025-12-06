@@ -13,6 +13,7 @@ dotenv.config();
 const db = require("./db");
 const app = express();
 const server = http.createServer(app);
+const adminRoutes = require("./routes/admin");
 
 // ===== CORS Middleware (before routes) =====
 const allowedOrigins = [
@@ -51,6 +52,7 @@ const io = new Server(server, {
 // ===== AUTH ROUTES FIRST =====
 const { router: authRoutes, authMiddleware } = require("./routes/auth");
 app.use("/api/auth", authRoutes);
+app.use("/api/admin", adminRoutes);
 
 // ===== ORDER ROUTES AFTER io =====
 const orderRoutesFactory = require("./routes/orders");

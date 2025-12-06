@@ -34,28 +34,25 @@ router.get("/agents", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch agents" });
   }
 });
-
-router.put("/restaurants/approve/:id", async (req, res) => {
+// Approve restaurant
+router.post("/approve", async (req, res) => {
+  const { restaurant_id } = req.body;
   try {
-    const restId = req.params.id;
-    const [rows] = await db.execute("SELECT * FROM restaurants WHERE id=?", [restId]);
-    const restaurant = rows[0];
-    if (!restaurant) return res.status(404).json({ message: "Restaurant not found" });
-
-    // Approve
-    await db.execute("UPDATE restaurants SET status='approved' WHERE id=?", [restId]);
-
-    // Auto-create login
-    const defaultPassword = "tindo123";
-    await db.execute(
-      "INSERT INTO users (email, password, role, restaurant_id) VALUES (?, ?, 'restaurant', ?)",
-      [restaurant.email, defaultPassword, restId]
-    );
-
-    res.json({ message: `${restaurant.name} approved & login created successfully!` });
+    await db.execute("UPDATE restaurants SET status='approved' WHERE id=?", [restaurant_id]);
+    res.json({ success: true, message: "Restaurant approved" });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Error approving restaurant" });
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Reject restaurant
+router.post("/reject", async (req, res) => {
+  const { restaurant_id } = req.body;
+  try {
+    await db.execute("UPDATE restaurants SET status='rejected' WHERE id=?", [restaurant_id]);
+    res.json({ success: true, message: "Restaurant rejected" });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
