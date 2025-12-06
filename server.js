@@ -18,6 +18,11 @@ const allowedOrigins = [
   "http://localhost:3000"
 ];
 
+
+
+
+app.options("*", cors(corsOptions));
+
 app.use(
   cors({
     origin: function (origin, callback) {
@@ -32,9 +37,6 @@ app.use(
     methods: ["GET", "POST", "PUT", "DELETE"]
   })
 );
-
-
-app.options("*", cors(corsOptions));
 
 // ===== Mappls Token Cache =====
 let mapplsToken = null;
