@@ -93,7 +93,7 @@ app.get("/api/mappls/token", async (req, res) => {
   }
 });
 
-const cors = require("cors");
+
 const allowedOrigins = [
   "https://food-ameerpet.vercel.app",
   "http://localhost:3000"
