@@ -58,13 +58,16 @@ async function getMapplsToken() {
   return mapplsToken;
 }
 
+const orderRoutesFactory = require("./routes/orders");
+const orderRoutes = orderRoutesFactory(io);
+app.use("/api/orders", orderRoutes);
 
 
 
 // ===== Optional modular routes =====
-let authRoutes, authMiddleware, orderRoutes, paymentRoutes, trackingRoutes, userAddressesRoutes, deliveryRoutes;
+let authRoutes, authMiddleware,  paymentRoutes, trackingRoutes, userAddressesRoutes, deliveryRoutes;
 try { ({ router: authRoutes, authMiddleware } = require("./routes/auth")); } catch (_) {}
-try { orderRoutes = require("./routes/orders"); } catch (_) {}
+
 try { paymentRoutes = require("./routes/payments"); } catch (_) {}
 try { trackingRoutes = require("./routes/tracking"); } catch (_) {}
 try { userAddressesRoutes = require("./routes/user-addresses"); } catch (_) {}
@@ -77,6 +80,8 @@ if (typeof authMiddleware !== "function") {
 
 const io = new Server(server, { cors: { origin: "*" } });
 
+app.use("/api/auth", auth.router);
+app.use("/api/orders", ordersRoutes);
 
 
 
