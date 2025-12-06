@@ -14,6 +14,10 @@ const db = require("./db");
 const app = express();
 const server = http.createServer(app);
 
+// Middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 // Initialize socket.io
 const io = new Server(server, {
   cors: {
@@ -30,9 +34,7 @@ app.use("/api/auth", authRoutes);
 const orderRoutesFactory = require("./routes/orders");
 const orderRoutes = orderRoutesFactory(io);
 app.use("/api/orders", orderRoutes);
-// Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
 
 
 
