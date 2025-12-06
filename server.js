@@ -33,7 +33,8 @@ app.use(
   })
 );
 
-
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 
 // ===== Mappls Token Cache =====
 let mapplsToken = null;
@@ -78,8 +79,8 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
 
-app.use(cors(corsOptions));
-app.options("*", cors(corsOptions));
+
+
 
 // ===== Middleware =====
 app.use(bodyParser.json());
