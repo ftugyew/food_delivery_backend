@@ -35,7 +35,8 @@ app.use(cors({
   credentials: true
 }));
 
-app.options("*", cors());
+app.use(cors());
+
 
 // ===== JSON & URL ENCODING MIDDLEWARE (BEFORE ROUTES) =====
 app.use(express.json());
