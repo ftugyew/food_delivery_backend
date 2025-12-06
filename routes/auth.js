@@ -56,8 +56,13 @@ router.post("/register", async (req, res) => {
       eta
     } = req.body;
 
+    // Validate required fields
     if (!name || !email || !password || !role) {
       return res.status(400).json({ error: "All fields required" });
+    }
+
+    if (!phone) {
+      return res.status(400).json({ error: "Phone number required" });
     }
 
     // Check if email already exists
@@ -145,21 +150,25 @@ router.post("/register", async (req, res) => {
       const token = generateToken(user);
       return res.json({ 
         success: true,
+        message: "Registered successfully",
         token, 
         user: {
           id: user.id,
           name: user.name,
           email: user.email,
+          phone: user.phone,
           role: user.role
         }
       });
     } else {
       return res.json({ 
+        success: true,
         message: "Registration submitted, pending admin approval", 
         user: {
           id: user.id,
           name: user.name,
           email: user.email,
+          phone: user.phone,
           role: user.role
         }
       });
@@ -188,6 +197,10 @@ router.post("/register-restaurant", upload.single("photo"), async (req, res) => 
 
     if (!name || !email || !password || !restaurant_name || !cuisine) {
       return res.status(400).json({ error: "Required fields missing" });
+    }
+
+    if (!phone) {
+      return res.status(400).json({ error: "Phone number required" });
     }
 
     // Check if email already exists
@@ -228,11 +241,13 @@ router.post("/register-restaurant", upload.single("photo"), async (req, res) => 
     user.role = normalizeRole(user.role);
 
     res.json({ 
+      success: true,
       message: "Restaurant registration submitted, pending admin approval", 
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
+        phone: user.phone,
         role: user.role
       }
     });
