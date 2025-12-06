@@ -16,6 +16,15 @@ const app = express();
 const server = http.createServer(app);
 
 
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
+
+
+
 const allowedOrigins = [
   "https://food-ameerpet.vercel.app",
   "http://localhost:3000"
@@ -82,7 +91,7 @@ if (typeof authMiddleware !== "function") {
 }
 
 
-const io = new Server(server, { cors: { origin: "*" } });
+
 
 
 
