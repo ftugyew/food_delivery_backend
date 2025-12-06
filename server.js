@@ -35,37 +35,8 @@ async function getMapplsToken() {
   return mapplsToken;
 }
 
-const cors = require("cors");
-
-app.use(cors({
-  origin: [
-    "https://food-ameerpet.vercel.app",
-    "http://localhost:3000",
-  ],
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: true,
-}));
-
-
-// Apply CORS before routes
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin) {
-        return callback(null, true);
-      }
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-      console.log("❌ Blocked CORS origin:", origin);
-      return callback(new Error("Not allowed by CORS"));
-    },
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    credentials: true
-  })
-);
-
+// Must be BEFORE routes!
+app.options("*", cors());
 
 
 // ===== Optional modular routes =====
@@ -121,6 +92,30 @@ app.get("/api/mappls/token", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch Mappls token" });
   }
 });
+
+const cors = require("cors");
+const allowedOrigins = [
+  "https://food-ameerpet.vercel.app",
+  "http://localhost:3000"
+];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.log("❌ Blocked by CORS:", origin);
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE"]
+  })
+);
+
+
+
 
 // ===== Reverse Geocode (Mappls) =====
 app.get("/api/mappls/reverse-geocode", async (req, res) => {
