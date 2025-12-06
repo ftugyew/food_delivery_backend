@@ -260,14 +260,14 @@ router.post("/register-restaurant", upload.single("photo"), async (req, res) => 
     res.status(500).json({ error: "Restaurant registration failed" });
   }
 });
+// ===== Login =====
 router.post("/login", async (req, res) => {
-  console.log("LOGIN req.body:", req.body); //
+  console.log("📩 LOGIN REQUEST BODY:", req.body);
 
   try {
-    console.log("📩 LOGIN REQUEST BODY:", req.body); // ⭐ LOG REQUEST DATA
-
     const { email, password } = req.body;
-    console.log("🔍 Checking email:", email); // ⭐ Which email?
+    console.log("🔍 Checking login for:", email);
+
 
     if (!email || !password) {
       console.log("⚠️ Missing fields!");
