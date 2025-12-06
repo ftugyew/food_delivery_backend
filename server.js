@@ -15,7 +15,7 @@ const app = express();
 const server = http.createServer(app);
 const adminRoutes = require("./routes/admin");
 
-const cors = require("cors");
+
 
 const allowedOrigins = [
   "http://localhost:5500", // local development
