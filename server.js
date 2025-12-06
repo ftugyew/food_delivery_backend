@@ -51,11 +51,21 @@ if (typeof authMiddleware !== "function") {
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
+const cors = require("cors");
+
+app.use(cors({
+  origin: ["https://food-ameerpet.vercel.app"],
+  methods: "GET,POST,PUT,DELETE",
+  credentials: true
+}));
+
 
 // ===== Middleware =====
 app.use(bodyParser.json());
 app.use(express.json());
 app.use("/api/restaurants", require("./routes/reviews"));
+app.options("*", cors());
+
 
 const allowedOrigins = ["https://food-ameerpet.vercel.app/"];
 app.use(cors({
