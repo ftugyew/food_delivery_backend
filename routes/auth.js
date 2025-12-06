@@ -218,30 +218,127 @@ router.post("/register-restaurant", upload.single("photo"), async (req, res) => 
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ error: "Email and password required" });
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password required" });
+    }
 
-    const [rows] = await db.execute("SELECT * FROM users WHERE email = ? AND password = ?", [email, password]);
-    if (rows.length === 0) return res.status(401).json({ error: "Invalid credentials" });
+    // Fetch user by email
+    const [rows] = await db.execute("SELECT * FROM users WHERE email = ?", [email]);
+    if (rows.length === 0) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
 
     const user = rows[0];
 
-    // ✅ Block login until approved
-    if (user.status !== "approved") {
-      return res.status(403).json({ error: "Your account is awaiting admin approval" });
+    // Check password (plain text for now as per requirement)
+    if (user.password !== password) {
+      return res.status(401).json({ error: "Invalid credentials" });
     }
 
+    // Role-based login logic with status checking
+    const normalizedRole = normalizeRole(user.role);
+
+    // Restaurant owner: check restaurant status
+    if (normalizedRole === 'restaurant') {
+      const restaurantId = user.restaurant_id;
+      if (restaurantId) {
+        const [restRows] = await db.execute("SELECT status FROM restaurants WHERE id = ?", [restaurantId]);
+        if (restRows.length > 0) {
+          const restaurantStatus = restRows[0].status;
+          
+          if (restaurantStatus === 'pending') {
+            return res.json({
+              status: "pending",
+              role: "restaurant",
+              message: "Waiting for admin approval",
+              user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                role: normalizedRole,
+                restaurant_id: restaurantId
+              }
+            });
+          } else if (restaurantStatus === 'rejected') {
+            return res.json({
+              status: "rejected",
+              role: "restaurant",
+              message: "Your restaurant was rejected",
+              user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                role: normalizedRole,
+                restaurant_id: restaurantId
+              }
+            });
+          } else if (restaurantStatus === 'approved') {
+            // Generate token and return success
+            const token = generateToken(user);
+            return res.json({
+              status: "approved",
+              role: "restaurant",
+              redirectTo: "/restaurant-dashboard.html",
+              token,
+              user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                role: normalizedRole,
+                restaurant_id: restaurantId
+              }
+            });
+          }
+        }
+      }
+    }
+
+    // Admin: always allow
+    if (normalizedRole === 'admin') {
+      const token = generateToken(user);
+      return res.json({
+        role: "admin",
+        redirectTo: "/admin-dashboard.html",
+        token,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: normalizedRole
+        }
+      });
+    }
+
+    // Delivery agent: allow
+    if (normalizedRole === 'delivery') {
+      const token = generateToken(user);
+      return res.json({
+        role: "delivery",
+        redirectTo: "/delivery-dashboard.html",
+        token,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: normalizedRole
+        }
+      });
+    }
+
+    // Customer or unknown role: default behavior
     const token = generateToken(user);
-    res.json({
+    return res.json({
+      role: "customer",
+      redirectTo: "/index.html",
       token,
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
-        phone: user.phone,
-        role: normalizeRole(user.role),
-        restaurant_id: user.restaurant_id
+        role: normalizedRole
       }
     });
+
   } catch (err) {
     console.error("Login Error:", err);
     res.status(500).json({ error: "Login failed" });
