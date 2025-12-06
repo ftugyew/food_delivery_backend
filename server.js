@@ -784,23 +784,40 @@ if (authMiddleware) {
   });
 }
 
-// ===== Route Registration =====
-if (authRoutes) app.use("/api/auth", authRoutes);
-if (orderRoutes) {
-  const or = typeof orderRoutes === 'function' ? orderRoutes(io) : orderRoutes;
-  app.use("/api/orders", or);
+
+// ========= ROUTES REGISTRATION =========
+
+// AUTH ROUTES
+if (authRoutes) {
+  app.use("/api/auth", authRoutes);
 }
-if (paymentRoutes) app.use("/api/payments", paymentRoutes);
-if (trackingRoutes) app.use("/api/tracking", trackingRoutes);
-if (userAddressesRoutes) app.use("/api/user-addresses", userAddressesRoutes);
-if (deliveryRoutes) {
+
+// ORDERS ROUTES (must pass io)
+if (orderRoutesFactory) {
+  const orderRoutes = orderRoutesFactory(io);
+  app.use("/api/orders", orderRoutes);
+}
+
+// OPTIONAL SAFE ROUTES
+const optionalRoutes = [
+  { path: "/api/payments", file: "./routes/payments" },
+  { path: "/api/tracking", file: "./routes/tracking" },
+  { path: "/api/user-addresses", file: "./routes/user-addresses" },
+  { path: "/api/delivery", file: "./routes/delivery" }
+];
+
+optionalRoutes.forEach(r => {
   try {
-    const dr = typeof deliveryRoutes === 'function' ? deliveryRoutes(io) : deliveryRoutes;
-    app.use("/api/delivery", dr);
-  } catch (e) {
-    console.warn("Skipping deliveryRoutes:", e?.message);
+    const route = require(r.file);
+    if (typeof route === "function") {
+      app.use(r.path, route(io)); // if factory
+    } else if (route) {
+      app.use(r.path, route); // if router
+    }
+  } catch (err) {
+    console.warn(`Skipping route ${r.path}:`, err.message);
   }
-}
+});
 
 // ===== Socket.IO =====
 const deliveryAgents = {};
