@@ -30,6 +30,12 @@ const { router: authRoutes, authMiddleware } = require("./routes/auth");
 app.use("/api/auth", authRoutes);
 
 
+// ===== Middleware =====
+app.use(bodyParser.json());
+
+app.use("/api/restaurants", require("./routes/reviews"));
+
+
 const io = new Server(server, {
   cors: {
     origin: "*",
