@@ -1,4 +1,7 @@
-// server.js — Tindo Backend (Railway MySQL, cleaned)
+
+
+// server.js — CLEAN + WORKING
+
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
@@ -9,86 +12,39 @@ const path = require("path");
 const multer = require("multer");
 const axios = require("axios");
 const bcrypt = require("bcryptjs");
-// Must be BEFORE routes!
-app.options("*", cors());
-
 
 dotenv.config();
 const db = require("./db");
 
-// ===== Mappls Token Cache =====
-let mapplsToken = null;
-let tokenExpiry = 0;
+const app = express();
+const server = http.createServer(app);
 
-async function getMapplsToken() {
-  const now = Date.now();
-  if (mapplsToken && now < tokenExpiry) return mapplsToken;
-
-  console.log("🔄 Fetching new Mappls token...");
-  const clientId = process.env.MAPPLS_CLIENT_ID || "96dHZVzsAuv7B5EkcSSzEefSELCP1aRLsL_0MY9Cp3epWMeFg2WQv1kv7dgQuGBNLnxirw5J9eWNzohDvjSp7RJ9RyXHHRXh";
-  const clientSecret = process.env.MAPPLS_CLIENT_SECRET || "lrFxI-iSEg_h44hWmIUgohsKpN7AoIk-B5WjMRuvO2c6Zc7iLEnY3IG80uUUUsmbu2u2D50WT8gDIdG23f3Ph6l0lIKgdzzDpk9cdz4HlPg=";
-
-  const resp = await axios.post("https://outpost.mappls.com/api/security/oauth/token",
-    new URLSearchParams({ grant_type: "client_credentials", client_id: clientId, client_secret: clientSecret }),
-    { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
-  );
-
-  mapplsToken = resp.data.access_token;
-  tokenExpiry = now + (resp.data.expires_in - 300) * 1000;
-  return mapplsToken;
-}
-
-
-
-
+// ===== CORS FIXED =====
 const allowedOrigins = [
   "https://food-ameerpet.vercel.app",
   "http://localhost:3000"
 ];
 
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        console.log("❌ Blocked by CORS:", origin);
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE"]
-  })
-);
-
-
-// ===== Optional modular routes =====
-let authRoutes, authMiddleware, orderRoutes, paymentRoutes, trackingRoutes, userAddressesRoutes, deliveryRoutes;
-try { ({ router: authRoutes, authMiddleware } = require("./routes/auth")); } catch (_) {}
-try { orderRoutes = require("./routes/orders"); } catch (_) {}
-try { paymentRoutes = require("./routes/payments"); } catch (_) {}
-try { trackingRoutes = require("./routes/tracking"); } catch (_) {}
-try { userAddressesRoutes = require("./routes/user-addresses"); } catch (_) {}
-try { deliveryRoutes = require("./routes/delivery"); } catch (_) {}
-
-if (typeof authMiddleware !== "function") {
-  authMiddleware = (req, _res, next) => next();
-}
-
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
-
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    console.log("❌ CORS blocked:", origin);
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE"],
+};
 
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions));
+app.options("*", cors(corsOptions)); // Preflight support
 
-// ===== Middleware =====
-app.use(bodyParser.json());
+// Middleware
 app.use(express.json());
-app.use("/api/restaurants", require("./routes/reviews"));
+app.use(bodyParser.json());
 
-// ===== Multer (uploads) =====
+// Static Uploads
 const storage = multer.diskStorage({
   destination: "uploads/",
   filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
@@ -96,8 +52,19 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-// ===== Static =====
-app.get("/favicon.ico", (req, res) => res.status(204).end());
+// ===== ROUTES =====
+app.use("/api/auth", require("./routes/auth").router);
+app.use("/api/orders", require("./routes/orders"));
+app.use("/api/payments", require("./routes/payments"));
+app.use("/api/tracking", require("./routes/tracking"));
+app.use("/api/user-addresses", require("./routes/user-addresses"));
+app.use("/api/delivery", require("./routes/delivery"));
+app.use("/api/restaurants", require("./routes/restaurants")); // corrected ✔
+
+// Default Test Route
+app.get("/ping", (req, res) => {
+  res.json({ status: "Backend OK", time: new Date() });
+});
 
 // ===== Mappls Token =====
 app.get("/api/mappls/token", async (req, res) => {
