@@ -9,6 +9,9 @@ const path = require("path");
 const multer = require("multer");
 const axios = require("axios");
 const bcrypt = require("bcryptjs");
+// Must be BEFORE routes!
+app.options("*", cors());
+
 
 dotenv.config();
 const db = require("./db");
@@ -35,8 +38,7 @@ async function getMapplsToken() {
   return mapplsToken;
 }
 
-// Must be BEFORE routes!
-app.options("*", cors());
+
 
 
 const allowedOrigins = [
