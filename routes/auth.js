@@ -41,7 +41,7 @@ function normalizeRole(role) {
   return role === 'delivery_agent' ? 'delivery' : role;
 }
 
-console.log("Looking for user with email:", email);
+
 
 
 // ===== Register =====
