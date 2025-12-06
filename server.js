@@ -14,32 +14,7 @@ const db = require("./db");
 const app = express();
 const server = http.createServer(app);
 
-// Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Initialize socket.io
-const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
-});
-
-// ===== AUTH ROUTES FIRST =====
-const { router: authRoutes, authMiddleware } = require("./routes/auth");
-app.use("/api/auth", authRoutes);
-
-// ===== ORDER ROUTES AFTER io =====
-const orderRoutesFactory = require("./routes/orders");
-const orderRoutes = orderRoutesFactory(io);
-app.use("/api/orders", orderRoutes);
-
-
-
-
-
-
+// ===== CORS Middleware (before routes) =====
 const allowedOrigins = [
   "https://food-ameerpet.vercel.app",
   "http://localhost:3000"
@@ -58,7 +33,40 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options(/.*/, cors(corsOptions)); // Works now ✔
+app.options(/.*/, cors(corsOptions));
+
+// ===== JSON & URL ENCODING MIDDLEWARE (BEFORE ROUTES) =====
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(bodyParser.json());
+
+// ===== Initialize socket.io BEFORE routes =====
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
+
+// ===== AUTH ROUTES FIRST =====
+const { router: authRoutes, authMiddleware } = require("./routes/auth");
+app.use("/api/auth", authRoutes);
+
+// ===== ORDER ROUTES AFTER io =====
+const orderRoutesFactory = require("./routes/orders");
+const orderRoutes = orderRoutesFactory(io);
+app.use("/api/orders", orderRoutes);
+
+// ===== MULTER SETUP (uploads) =====
+const storage = multer.diskStorage({
+  destination: "uploads/",
+  filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
+});
+const upload = multer({ storage });
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+
+
 
 
 
@@ -107,21 +115,38 @@ if (typeof authMiddleware !== "function") {
 
 
 
-// ===== Middleware =====
-app.use(bodyParser.json());
+// ===== Static Files =====
+app.get("/favicon.ico", (req, res) => res.status(204).end());
 
+// ===== API LOGGING MIDDLEWARE =====
+app.use((req, res, next) => {
+  console.log("🔹 API Request:", req.method, req.originalUrl, req.body);
+  next();
+});
+
+// ===== Restaurants Route =====
 app.use("/api/restaurants", require("./routes/reviews"));
 
-// ===== Multer (uploads) =====
-const storage = multer.diskStorage({
-  destination: "uploads/",
-  filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
-});
-const upload = multer({ storage });
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+// ===== Optional Routes (safe loading) =====
+const optionalRoutes = [
+  { path: "/api/payments", file: "./routes/payments" },
+  { path: "/api/tracking", file: "./routes/tracking" },
+  { path: "/api/user-addresses", file: "./routes/user-addresses" },
+  { path: "/api/delivery", file: "./routes/delivery" }
+];
 
-// ===== Static =====
-app.get("/favicon.ico", (req, res) => res.status(204).end());
+optionalRoutes.forEach(r => {
+  try {
+    const route = require(r.file);
+    if (typeof route === "function") {
+      app.use(r.path, route(io)); // if factory
+    } else if (route) {
+      app.use(r.path, route); // if router
+    }
+  } catch (err) {
+    console.warn(`⚠️ Skipping route ${r.path}:`, err.message);
+  }
+});
 
 // ===== Mappls Token =====
 app.get("/api/mappls/token", async (req, res) => {
@@ -786,42 +811,7 @@ if (authMiddleware) {
   });
 }
 
-
-// ========= ROUTES REGISTRATION =========
-
-// AUTH ROUTES
-if (authRoutes) {
-  app.use("/api/auth", authRoutes);
-}
-
-// ORDERS ROUTES (must pass io)
-if (orderRoutesFactory) {
-  const orderRoutes = orderRoutesFactory(io);
-  app.use("/api/orders", orderRoutes);
-}
-
-// OPTIONAL SAFE ROUTES
-const optionalRoutes = [
-  { path: "/api/payments", file: "./routes/payments" },
-  { path: "/api/tracking", file: "./routes/tracking" },
-  { path: "/api/user-addresses", file: "./routes/user-addresses" },
-  { path: "/api/delivery", file: "./routes/delivery" }
-];
-
-optionalRoutes.forEach(r => {
-  try {
-    const route = require(r.file);
-    if (typeof route === "function") {
-      app.use(r.path, route(io)); // if factory
-    } else if (route) {
-      app.use(r.path, route); // if router
-    }
-  } catch (err) {
-    console.warn(`Skipping route ${r.path}:`, err.message);
-  }
-});
-
-// ===== Socket.IO =====
+// ========= SOCKET.IO EVENT HANDLERS =========
 const deliveryAgents = {};
 io.on("connection", (socket) => {
   console.log("🟢 Socket connected:", socket.id);

@@ -63,6 +63,43 @@ module.exports = (io) => {
     res.json({ message: "✅ Location updated" });
   });
 
+  // ===== NEW: Deliver Location Update (for spec compliance) =====
+  router.post("/update-location", async (req, res) => {
+    try {
+      const { agent_id, lat, lng } = req.body;
+      
+      if (!agent_id || typeof lat !== "number" || typeof lng !== "number") {
+        return res.status(400).json({ error: "Invalid agent_id, lat, or lng" });
+      }
+
+      // Update agent location in database
+      await db.execute(
+        "UPDATE agents SET lat = ?, lng = ?, status = 'Active' WHERE id = ?",
+        [lat, lng, agent_id]
+      );
+
+      // Get all orders for this agent
+      const [orders] = await db.execute(
+        "SELECT id FROM orders WHERE agent_id = ? AND status NOT IN ('Completed', 'Cancelled')",
+        [agent_id]
+      );
+
+      // Emit location update for each order
+      orders.forEach(order => {
+        io.emit(`trackOrder_${order.id}`, { agent_id, lat, lng });
+      });
+
+      // Also emit general location update
+      io.emit("agentLocation", { agent_id, lat, lng });
+
+      console.log(`📍 Agent ${agent_id} location updated: ${lat}, ${lng}`);
+      res.json({ success: true, message: "Location updated", agent_id, lat, lng });
+    } catch (err) {
+      console.error("Location update error:", err);
+      res.status(500).json({ error: "Failed to update location", details: err.message });
+    }
+  });
+
   // Fetch agent location by order id (for tracking page polling)
   router.get("/location/:order_id", async (req, res) => {
     try {
