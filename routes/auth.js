@@ -261,30 +261,39 @@ router.post("/register-restaurant", upload.single("photo"), async (req, res) => 
   }
 });
 
-// ===== Login =====
 router.post("/login", async (req, res) => {
   try {
+    console.log("📩 LOGIN REQUEST BODY:", req.body); // ⭐ LOG REQUEST DATA
+
     const { email, password } = req.body;
+    console.log("🔍 Checking email:", email); // ⭐ Which email?
+
     if (!email || !password) {
+      console.log("⚠️ Missing fields!");
       return res.status(400).json({ error: "Email and password required" });
     }
 
     // Fetch user by email only
     const [rows] = await db.execute("SELECT * FROM users WHERE email = ?", [email]);
+    console.log("🔎 DB Query Result:", rows); // ⭐ What user data returned?
+
     if (rows.length === 0) {
+      console.log("❌ No user found with this email");
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
     const user = rows[0];
-
-    // Verify password using bcrypt
     const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+    console.log("🔐 Password Match:", isPasswordValid); // ⭐ True / False
+
     if (!isPasswordValid) {
+      console.log("❌ Wrong password entered");
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
-    // Role-based login logic with status checking
     const normalizedRole = normalizeRole(user.role);
+    console.log("👤 Role Detected:", normalizedRole); // ⭐ Who is logging in?
+
 
     // Restaurant owner: check restaurant status
     if (normalizedRole === 'restaurant') {

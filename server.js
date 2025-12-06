@@ -15,26 +15,27 @@ const app = express();
 const server = http.createServer(app);
 const adminRoutes = require("./routes/admin");
 
-// ===== CORS Middleware (before routes) =====
+const cors = require("cors");
+
 const allowedOrigins = [
-  "https://food-ameerpet.vercel.app",
-  "http://localhost:3000"
+  "http://localhost:5500", // local development
+  "https://food-delivery-backend-cw3m.onrender.com", // backend domain
+  "https://food-ameerpet.vercel.app" // if deployed frontend
 ];
 
-const corsOptions = {
+app.use(cors({
   origin: function (origin, callback) {
     if (!origin || allowedOrigins.includes(origin)) {
-      return callback(null, true);
+      callback(null, true);
+    } else {
+      console.log("❌ CORS blocked:", origin);
+      callback(new Error("Not allowed by CORS"));
     }
-    console.log("❌ CORS blocked:", origin);
-    return callback(new Error("Not allowed by CORS"));
   },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE"]
-};
+  credentials: true
+}));
 
-app.use(cors(corsOptions));
-app.options(/.*/, cors(corsOptions));
+app.options("*", cors());
 
 // ===== JSON & URL ENCODING MIDDLEWARE (BEFORE ROUTES) =====
 app.use(express.json());
