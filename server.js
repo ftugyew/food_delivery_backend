@@ -16,6 +16,16 @@ const app = express();
 const server = http.createServer(app);
 
 
+// Middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+
+// 🔹 Auth Routes First
+const { router: authRoutes, authMiddleware } = require("./routes/auth");
+app.use("/api/auth", authRoutes);
+
+
 const io = new Server(server, {
   cors: {
     origin: "*",
@@ -45,9 +55,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions)); // Works now ✔
 
-// 🔹 Auth Routes First
-const { router: authRoutes, authMiddleware } = require("./routes/auth");
-app.use("/api/auth", authRoutes);
+
 
 // 🔹 Orders Routes AFTER io is defined
 const orderRoutesFactory = require("./routes/orders");
@@ -99,7 +107,7 @@ if (typeof authMiddleware !== "function") {
 
 // ===== Middleware =====
 app.use(bodyParser.json());
-app.use(express.json());
+
 app.use("/api/restaurants", require("./routes/reviews"));
 
 // ===== Multer (uploads) =====
