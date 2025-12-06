@@ -9,7 +9,7 @@ const path = require("path");
 const multer = require("multer");
 const axios = require("axios");
 const bcrypt = require("bcryptjs");
-
+const orderRoutes = orderRoutesFactory(io);
 dotenv.config();
 const db = require("./db");
 const app = express();
@@ -42,7 +42,7 @@ app.use("/api/auth", authRoutes);
 
 // 🔹 Orders Routes AFTER io is defined
 const orderRoutesFactory = require("./routes/orders");
-const orderRoutes = orderRoutesFactory(io);
+
 app.use("/api/orders", orderRoutes);
 
 
