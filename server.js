@@ -12,31 +12,29 @@ const bcrypt = require("bcryptjs");
 
 dotenv.config();
 const db = require("./db");
+const app = express();
+const server = http.createServer(app);
+
 
 const allowedOrigins = [
   "https://food-ameerpet.vercel.app",
   "http://localhost:3000"
 ];
 
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    console.log("❌ CORS blocked:", origin);
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE"]
+};
 
-
-
-app.options("*", cors(corsOptions));
-
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        console.log("❌ Blocked by CORS:", origin);
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE"]
-  })
-);
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions)); // Works now ✔
 
 // ===== Mappls Token Cache =====
 let mapplsToken = null;
@@ -76,8 +74,7 @@ if (typeof authMiddleware !== "function") {
   authMiddleware = (req, _res, next) => next();
 }
 
-const app = express();
-const server = http.createServer(app);
+
 const io = new Server(server, { cors: { origin: "*" } });
 
 
