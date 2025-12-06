@@ -20,6 +20,10 @@ const server = http.createServer(app);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// 🔹 Orders Routes AFTER io is defined
+const orderRoutesFactory = require("./routes/orders");
+
+app.use("/api/orders", orderRoutes);
 
 // 🔹 Auth Routes First
 const { router: authRoutes, authMiddleware } = require("./routes/auth");
@@ -57,10 +61,7 @@ app.options(/.*/, cors(corsOptions)); // Works now ✔
 
 
 
-// 🔹 Orders Routes AFTER io is defined
-const orderRoutesFactory = require("./routes/orders");
 
-app.use("/api/orders", orderRoutes);
 
 
 // ===== Mappls Token Cache =====
