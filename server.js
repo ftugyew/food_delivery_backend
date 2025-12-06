@@ -37,11 +37,16 @@ async function getMapplsToken() {
 
 const cors = require("cors");
 
-// CORS allowed origins
-const allowedOrigins = [
-  "https://food-ameerpet.vercel.app",
-  "http://localhost:3000"
-];
+app.use(cors({
+  origin: [
+    "https://food-ameerpet.vercel.app",
+    "http://localhost:3000",
+  ],
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true,
+}));
+
 
 // Apply CORS before routes
 app.use(
