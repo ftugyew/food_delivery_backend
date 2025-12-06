@@ -35,6 +35,34 @@ async function getMapplsToken() {
   return mapplsToken;
 }
 
+const cors = require("cors");
+
+// CORS allowed origins
+const allowedOrigins = [
+  "https://food-ameerpet.vercel.app",
+  "http://localhost:3000"
+];
+
+// Apply CORS before routes
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) {
+        return callback(null, true);
+      }
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      console.log("❌ Blocked CORS origin:", origin);
+      return callback(new Error("Not allowed by CORS"));
+    },
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true
+  })
+);
+
+
+
 // ===== Optional modular routes =====
 let authRoutes, authMiddleware, orderRoutes, paymentRoutes, trackingRoutes, userAddressesRoutes, deliveryRoutes;
 try { ({ router: authRoutes, authMiddleware } = require("./routes/auth")); } catch (_) {}
@@ -52,24 +80,6 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-// ===== CORS Configuration =====
-const corsOptions = {
-  origin: (origin, callback) => {
-    const allowedOrigins = [
-      "https://food-ameerpet.vercel.app",
-      "http://localhost:3000",
-      "http://localhost:5000",
-    ];
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error("CORS not allowed"));
-    }
-  },
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: true,
-};
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
