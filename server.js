@@ -545,6 +545,71 @@ app.get("/api/admin/menu", async (req, res) => {
   }
 });
 
+// GET /api/menu/restaurant/:id - Get menu items for a restaurant (no auth required)
+app.get("/api/menu/restaurant/:id", async (req, res) => {
+  try {
+    const restaurantId = req.params.id;
+    const [rows] = await db.execute("SELECT * FROM menu WHERE restaurant_id = ? ORDER BY id DESC", [restaurantId]);
+    return res.json(rows || []);
+  } catch (err) {
+    console.error("❌ Error fetching menu by restaurant:", err?.message);
+    return res.status(500).json({ success: false, error: "Failed to fetch menu items" });
+  }
+});
+
+// POST /api/menu/add - Add menu item (JSON body, authMiddleware, no file upload)
+app.post("/api/menu/add", authMiddleware, async (req, res) => {
+  try {
+    const user = req.user || {};
+    console.log("📝 Add menu item - User:", user.id, "Role:", user.role, "Restaurant ID:", user.restaurant_id);
+    
+    // Validate user
+    if (!user.restaurant_id) {
+      return res.status(400).json({ 
+        success: false,
+        error: "No restaurant_id found", 
+        details: "Please login as a restaurant owner"
+      });
+    }
+    
+    // Get values from JSON body
+    const { item_name, price, description, category, is_veg } = req.body;
+    
+    // Validate required fields
+    if (!item_name || price === undefined || price === null) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "Missing item_name or price" 
+      });
+    }
+    
+    const restaurantId = user.restaurant_id;
+    const finalIsVeg = is_veg === 1 || is_veg === true ? 1 : 0;
+    
+    console.log("📝 Inserting menu item:", { item_name, price, description, category, is_veg: finalIsVeg, restaurantId });
+    
+    // Insert into menu table
+    const [result] = await db.execute(
+      "INSERT INTO menu (restaurant_id, item_name, description, price, category, is_veg) VALUES (?, ?, ?, ?, ?, ?)",
+      [restaurantId, item_name, description || "", Number(price) || 0, category || "Uncategorized", finalIsVeg]
+    );
+    
+    console.log("✅ Menu item added, ID:", result.insertId);
+    return res.json({ 
+      success: true, 
+      message: "Menu item added successfully",
+      id: result.insertId 
+    });
+  } catch (err) {
+    console.error("❌ Error adding menu item:", err?.message, err?.sqlMessage);
+    return res.status(500).json({ 
+      success: false,
+      error: "Failed to add menu item", 
+      details: err.message || err.sqlMessage 
+    });
+  }
+});
+
 app.get("/api/restaurant/:id/menu", async (req, res) => {
   try {
     const [rows] = await db.execute("SELECT * FROM menu WHERE restaurant_id = ?", [req.params.id]);
@@ -589,16 +654,13 @@ app.get("/api/menu/by-restaurant/:id", async (req, res) => {
 app.post("/api/menu", authMiddleware, upload.single("image"), async (req, res) => {
   try {
     const user = req.user || {};
-    console.log("📝 Add menu item - User:", user.id, "Role:", user.role, "Restaurant ID:", user.restaurant_id);
-    
-    if (user.role && user.role !== "restaurant" && user.role !== "admin") {
-      return res.status(403).json({ error: "Only restaurants can add menu items" });
-    }
+    console.log("📝 Add menu item (multipart) - User:", user.id, "Role:", user.role, "Restaurant ID:", user.restaurant_id);
     
     if (!user.restaurant_id) {
       return res.status(400).json({ 
+        success: false,
         error: "No restaurant_id found", 
-        details: "Please login as a restaurant owner or contact admin"
+        details: "Please login as a restaurant owner"
       });
     }
     
@@ -607,21 +669,28 @@ app.post("/api/menu", authMiddleware, upload.single("image"), async (req, res) =
     const imageUrl = req.file ? req.file.filename : null;
     
     if (!item_name || !price) {
-      return res.status(400).json({ error: "Missing item_name or price" });
+      return res.status(400).json({ success: false, error: "Missing item_name or price" });
     }
     
-    console.log("📝 Adding menu item:", { item_name, price, description, category, is_veg, imageUrl, restaurantId });
+    // Convert is_veg to 1/0
+    const finalIsVeg = is_veg === 'non-veg' || is_veg === 0 ? 0 : 1;
+    
+    console.log("📝 Adding menu item (multipart):", { item_name, price, description, category, is_veg: finalIsVeg, imageUrl, restaurantId });
     
     const [result] = await db.execute(
-      "INSERT INTO menu (restaurant_id, item_name, description, price, category, image_url, is_veg, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())",
-      [restaurantId, item_name, description || "", Number(price) || 0, category || null, imageUrl, is_veg || 'veg']
+      "INSERT INTO menu (restaurant_id, item_name, description, price, category, is_veg, image_url) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [restaurantId, item_name, description || "", Number(price) || 0, category || "Uncategorized", finalIsVeg, imageUrl]
     );
     
     console.log("✅ Menu item added, ID:", result.insertId);
-    return res.json({ success: true, message: "Dish added", id: result.insertId });
+    return res.json({ success: true, message: "Menu item added successfully", id: result.insertId });
   } catch (err) {
     console.error("❌ Error adding menu item:", err?.message, err?.sqlMessage);
-    return res.status(500).json({ error: "Failed to add menu item", details: err.message || err.sqlMessage });
+    return res.status(500).json({ 
+      success: false,
+      error: "Failed to add menu item", 
+      details: err.message || err.sqlMessage 
+    });
   }
 });
 
