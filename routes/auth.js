@@ -104,84 +104,64 @@ router.post("/register", async (req, res) => {
   }
 });
 
-   
-// ===== Restaurant Registration with Photo =====
-router.post("/register-restaurant", upload.single("photo"), async (req, res) => {
+// ===== Register =====
+router.post("/register", async (req, res) => {
   try {
-    const { 
-      name, 
-      email, 
-      phone, 
-      password, 
-      role, 
-      restaurant_name, 
-      description, 
-      cuisine, 
-      eta 
-    } = req.body;
+    const { name, email, password, phone, role, restaurant_name, cuisine, description, eta, vehicle_type, aadhar } = req.body;
 
-    if (!name || !email || !password || !restaurant_name || !cuisine) {
-      return res.status(400).json({ error: "Required fields missing" });
+    if (!name || !email || !password || !phone || !role) {
+      return res.status(400).json({ error: "All fields required" });
     }
 
-    if (!phone) {
-      return res.status(400).json({ error: "Phone number required" });
-    }
-
-    // Check if email already exists
-    const [existing] = await db.execute("SELECT * FROM users WHERE email = ?", [email]);
-    if (existing.length > 0) {
+    // Prevent duplicate accounts
+    const [existingUser] = await db.execute("SELECT id FROM users WHERE email = ?", [email]);
+    if (existingUser.length > 0) {
       return res.status(400).json({ error: "Email already registered" });
     }
 
-    // Hash password using bcrypt
-    const passwordHash = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(password, 10);
+    let restaurantId = null;
 
-    // Create restaurant entry with photo
-    const imageUrl = req.file ? req.file.filename : null;
-    const [result] = await db.execute(
-      `INSERT INTO restaurants (name, description, cuisine, eta, image_url, email, phone, status, created_at) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NOW())`,
-      [restaurant_name, description || '', cuisine, parseInt(eta) || 30, imageUrl, email, phone]
-    );
-    const restaurantId = result.insertId;
-
-    // Insert user with password_hash
-    const [userResult] = await db.execute(
-      "INSERT INTO users (name, email, phone, password_hash, role, restaurant_id, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
-      [name, email, phone, passwordHash, role, restaurantId]
-    );
-
-    const user = {
-      id: userResult.insertId,
-      name,
-      email,
-      phone,
-      role,
-      restaurant_id: restaurantId,
-      status: "pending"
-    };
-
-    // Normalize role for frontend convenience
-    user.role = normalizeRole(user.role);
-
-    res.json({ 
-      success: true,
-      message: "Restaurant registration submitted, pending admin approval", 
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role
+    // Restaurant registration
+    if (role === "restaurant") {
+      if (!restaurant_name || !cuisine) {
+        return res.status(400).json({ error: "Restaurant fields missing" });
       }
+
+      const [insertResult] = await db.execute(
+        "INSERT INTO restaurants (name, cuisine, description, eta, status) VALUES (?, ?, ?, ?, 'pending')",
+        [restaurant_name, cuisine, description || "", eta || 30]
+      );
+      restaurantId = insertResult.insertId;
+    }
+
+    // Delivery agent registration
+    if (role === "delivery_agent") {
+      if (!aadhar || !vehicle_type) {
+        return res.status(400).json({ error: "Delivery agent fields missing" });
+      }
+    }
+
+    // Insert into users table
+    const [userResult] = await db.execute(
+      "INSERT INTO users (name, email, phone, password_hash, role, restaurant_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [name, email, phone, hashedPassword, role, restaurantId]
+    );
+
+    res.json({
+      success: true,
+      message: role === "restaurant" 
+        ? "Restaurant added. Pending admin approval." 
+        : "Registration successful.",
+      user_id: userResult.insertId
     });
 
   } catch (err) {
-    console.error("Restaurant Register Error:", err);
-    res.status(500).json({ error: "Restaurant registration failed" });
+    console.error("Registration Error:", err);
+    res.status(500).json({ error: "Registration failed" });
   }
 });
+
 // ===== Login =====
 router.post("/login", async (req, res) => {
   console.log("📩 LOGIN REQUEST BODY:", req.body);
