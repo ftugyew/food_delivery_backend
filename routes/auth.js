@@ -47,37 +47,62 @@ function normalizeRole(role) {
 // ===== Register =====
 router.post("/register", async (req, res) => {
   try {
-    const { 
-      name, 
-      email, 
-      phone, 
-      password, 
-      role,
-      restaurant_name,
-      description,
-      cuisine,
-      eta
-    } = req.body;
+    const { name, email, password, phone, role, restaurant_name, cuisine, description, eta, vehicle_type, aadhar } = req.body;
 
-    // Validate required fields
-    if (!name || !email || !password || !role) {
+    if (!name || !email || !password || !phone || !role) {
       return res.status(400).json({ error: "All fields required" });
     }
 
-    if (!phone) {
-      return res.status(400).json({ error: "Phone number required" });
-    }
-
     // Check if email already exists
-    const [existing] = await db.execute("SELECT * FROM users WHERE email = ?", [email]);
-    if (existing.length > 0) {
+    const [existingUser] = await db.execute("SELECT email FROM users WHERE email = ?", [email]);
+    if (existingUser.length > 0) {
       return res.status(400).json({ error: "Email already registered" });
     }
 
-    // Hash password using bcrypt
-    const passwordHash = await bcrypt.hash(password, 10);
-
+    const hashedPassword = await bcrypt.hash(password, 10);
     let restaurantId = null;
+
+    // Register Restaurant Role
+    if (role === "restaurant") {
+      if (!restaurant_name || !cuisine) {
+        return res.status(400).json({ error: "Restaurant details missing" });
+      }
+
+      // Insert restaurant into DB
+      const [rest] = await db.execute(
+        "INSERT INTO restaurants(name, cuisine, description, eta, status) VALUES (?, ?, ?, ?, 'pending')",
+        [restaurant_name, cuisine, description || "", eta || 30]
+      );
+      restaurantId = rest.insertId;
+    }
+
+    // Register Delivery Agent Role
+    if (role === "delivery_agent") {
+      if (!aadhar || !vehicle_type) {
+        return res.status(400).json({ error: "Delivery agent details missing" });
+      }
+    }
+
+    // Insert user details
+    const [user] = await db.execute(
+      "INSERT INTO users(name, email, phone, password_hash, role, restaurant_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [name, email, phone, hashedPassword, role, restaurantId]
+    );
+
+    return res.json({
+      success: true,
+      message:
+        role === "restaurant"
+          ? "Restaurant registered! Awaiting admin approval"
+          : "Registration successful!",
+      user_id: user.insertId
+    });
+
+  } catch (err) {
+    console.error("Registration Error:", err);
+    return res.status(500).json({ error: "Registration failed" });
+  }
+});
 
     // If restaurant → create restaurant entry too
     if (role === "restaurant") {
