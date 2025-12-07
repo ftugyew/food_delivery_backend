@@ -28,11 +28,11 @@ router.post("/", async (req, res) => {
 // Get all restaurants
 router.get("/", async (req, res) => {
   try {
-    const [rows] = await db.execute("SELECT * FROM restaurants WHERE status = 'active'");
-    res.json(rows);
+    const [rows] = await db.execute("SELECT * FROM restaurants WHERE status = 'active' OR status = 'approved'");
+    res.json({ success: true, data: rows });
   } catch (err) {
     console.error("Fetch restaurants error:", err.sqlMessage || err);
-    res.status(500).json({ error: "Failed to fetch restaurants" });
+    res.status(500).json({ success: false, error: "Failed to fetch restaurants" });
   }
 });
 
@@ -40,10 +40,15 @@ router.get("/", async (req, res) => {
 router.get("/:id", async (req, res) => {
   try {
     const [rows] = await db.execute("SELECT * FROM restaurants WHERE id = ?", [req.params.id]);
-    res.json(rows[0]);
+    
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ success: false, error: "Restaurant not found" });
+    }
+    
+    res.json({ success: true, data: rows[0] });
   } catch (err) {
     console.error("Fetch restaurant by ID error:", err.sqlMessage || err);
-    res.status(500).json({ error: "Failed to fetch restaurant" });
+    res.status(500).json({ success: false, error: "Failed to fetch restaurant" });
   }
 });
 

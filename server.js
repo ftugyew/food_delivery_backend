@@ -61,6 +61,10 @@ const orderRoutesFactory = require("./routes/orders");
 const orderRoutes = orderRoutesFactory(io);
 app.use("/api/orders", orderRoutes);
 
+// ===== RESTAURANTS ROUTES =====
+const restaurantsRoutes = require("./routes/restaurants");
+app.use("/api/restaurants", restaurantsRoutes);
+
 // ===== MULTER SETUP (uploads) =====
 const storage = multer.diskStorage({
   destination: "uploads/",
@@ -128,8 +132,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// ===== Restaurants Route =====
-app.use("/api/restaurants", require("./routes/reviews"));
+// ===== Reviews Route (keeping for backward compatibility) =====
+app.use("/api/reviews", require("./routes/reviews"));
 
 // ===== Optional Routes (safe loading) =====
 const optionalRoutes = [
@@ -600,12 +604,20 @@ app.post("/api/menu/test-add", upload.single("image"), async (req, res) => {
 app.get("/api/menu/my", authMiddleware, async (req, res) => {
   try {
     const user = req.user || {};
-    const restaurantId = user.restaurant_id || 1;
+    
+    if (!user.restaurant_id) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "No restaurant_id associated with this user. Please login as a restaurant owner." 
+      });
+    }
+    
+    const restaurantId = user.restaurant_id;
     const [rows] = await db.execute("SELECT * FROM menu WHERE restaurant_id = ? ORDER BY created_at DESC", [restaurantId]);
-    return res.json(rows);
+    return res.json({ success: true, data: rows });
   } catch (err) {
     console.error("Error fetching my menu:", err?.message);
-    return res.status(500).json({ error: "Failed to fetch menu" });
+    return res.status(500).json({ success: false, error: "Failed to fetch menu" });
   }
 });
 
