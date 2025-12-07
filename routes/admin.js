@@ -98,7 +98,7 @@ router.get("/orders", async (req, res) => {
 // ================= DELIVERY AGENTS =================
 router.get("/delivery", async (req, res) => {
   try {
-    const [rows] = await db.execute("SELECT * FROM delivery_agents");
+    const [rows] = await db.execute("SELECT * FROM agents");
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch agents" });
@@ -108,7 +108,7 @@ router.get("/delivery", async (req, res) => {
 // Alias for /delivery → /agents (as per requirement)
 router.get("/agents", async (req, res) => {
   try {
-    const [rows] = await db.execute("SELECT * FROM delivery_agents");
+    const [rows] = await db.execute("SELECT * FROM agents");
     res.json({ success: true, data: rows });
   } catch (err) {
     res.status(500).json({ success: false, error: "Failed to fetch agents" });

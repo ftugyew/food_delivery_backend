@@ -7,6 +7,7 @@ const { Server } = require("socket.io");
 const dotenv = require("dotenv");
 const path = require("path");
 const multer = require("multer");
+const fs = require("fs");
 const axios = require("axios");
 const bcrypt = require("bcryptjs");
 dotenv.config();
@@ -66,8 +67,16 @@ const restaurantsRoutes = require("./routes/restaurants");
 app.use("/api/restaurants", restaurantsRoutes);
 
 // ===== MULTER SETUP (uploads) =====
+// Multer storage with per-field folders (menu images go to uploads/menu)
+const uploadsRoot = path.join(__dirname, "uploads");
+const menuUploads = path.join(uploadsRoot, "menu");
+fs.mkdirSync(menuUploads, { recursive: true });
 const storage = multer.diskStorage({
-  destination: "uploads/",
+  destination: (req, file, cb) => {
+    const dest = file.fieldname === "image" ? menuUploads : uploadsRoot;
+    fs.mkdirSync(dest, { recursive: true });
+    cb(null, dest);
+  },
   filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
 });
 const upload = multer({ storage });
@@ -292,7 +301,7 @@ app.get("/api/admin/restaurants", async (req, res) => {
 app.put("/api/restaurants/approve/:id", async (req, res) => {
   try {
     await db.execute("UPDATE restaurants SET status='approved' WHERE id=?", [req.params.id]);
-    await db.execute("UPDATE users SET status='approved' WHERE restaurant_id=?", [req.params.id]);
+    await db.execute("UPDATE users SET status='approved', restaurant_id = COALESCE(restaurant_id, ?) WHERE restaurant_id=? OR (restaurant_id IS NULL AND role='restaurant' AND status='pending')", [req.params.id, req.params.id]);
     res.json({ message: "Restaurant approved ✅" });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -310,16 +319,12 @@ app.put("/api/restaurants/reject/:id", async (req, res) => {
   }
 });
 
-// ===== Featured Restaurants =====
-app.get("/api/featured-restaurants", async (req, res) => {
+// ===== Featured Restaurants (no legacy tables) =====
+const selectFeaturedSql = `SELECT id, name, cuisine, image_url, status, featured FROM restaurants WHERE status='approved' AND featured = 1 ORDER BY rating DESC, id DESC`;
+app.get("/api/featured-restaurants", async (_req, res) => {
   try {
-    const [results] = await db.execute(`
-      SELECT fr.*, r.name, r.cuisine, r.image_url, r.status AS restaurant_status
-      FROM featured_restaurants fr
-      JOIN restaurants r ON fr.restaurant_id = r.id
-      ORDER BY fr.position ASC
-    `);
-    return res.json(results);
+    const [rows] = await db.execute(selectFeaturedSql);
+    return res.json(rows);
   } catch (err) {
     console.error("Error fetching featured restaurants:", err?.message);
     return res.status(500).json({ error: "Failed to fetch featured restaurants" });
@@ -328,220 +333,136 @@ app.get("/api/featured-restaurants", async (req, res) => {
 
 app.post("/api/featured-restaurants", async (req, res) => {
   try {
-    const { restaurant_id, position } = req.body;
-    const [restaurant] = await db.execute("SELECT id FROM restaurants WHERE id = ?", [restaurant_id]);
-    if (!restaurant.length) return res.status(404).json({ error: "Restaurant not found" });
-    const [existing] = await db.execute("SELECT id FROM featured_restaurants WHERE restaurant_id = ?", [restaurant_id]);
-    if (existing.length) return res.status(400).json({ error: "Restaurant already featured" });
-    await db.execute("INSERT INTO featured_restaurants (restaurant_id, position, is_active) VALUES (?, ?, 1)", [restaurant_id, position]);
-    res.json({ message: "Featured restaurant added" });
+    const { restaurant_id } = req.body || {};
+    if (!restaurant_id) return res.status(400).json({ error: "restaurant_id required" });
+    await db.execute("UPDATE restaurants SET featured = 1 WHERE id = ?", [restaurant_id]);
+    return res.json({ message: "Featured restaurant added" });
   } catch (err) {
     console.error("Error adding featured restaurant:", err);
-    res.status(500).json({ error: "Failed to add featured restaurant" });
+    return res.status(500).json({ error: "Failed to add featured restaurant" });
   }
 });
 
-app.get("/api/admin/featured-restaurants", async (req, res) => {
+app.get("/api/admin/featured-restaurants", async (_req, res) => {
   try {
-    const [results] = await db.execute(`
-      SELECT fr.*, r.name, r.cuisine, r.image_url, r.status AS restaurant_status
-      FROM featured_restaurants fr
-      JOIN restaurants r ON fr.restaurant_id = r.id
-      ORDER BY fr.position ASC
-    `);
-    res.json(results);
+    const [rows] = await db.execute(selectFeaturedSql);
+    return res.json({ success: true, data: rows });
   } catch (err) {
-    console.error("Error fetching featured restaurants (admin):", err);
-    res.status(500).json({ error: "Failed to fetch featured restaurants" });
+    console.error("Error fetching featured restaurants (admin):", err?.message);
+    return res.status(500).json({ success: false, error: "Failed to fetch featured restaurants" });
   }
 });
 
 app.post("/api/admin/featured-restaurants", async (req, res) => {
   try {
-    const { restaurant_id, position } = req.body;
-    const [restaurant] = await db.execute("SELECT id FROM restaurants WHERE id = ?", [restaurant_id]);
-    if (!restaurant.length) return res.status(404).json({ error: "Restaurant not found" });
-    const [existing] = await db.execute("SELECT id FROM featured_restaurants WHERE restaurant_id = ?", [restaurant_id]);
-    if (existing.length) return res.status(400).json({ error: "Already featured" });
-    await db.execute("INSERT INTO featured_restaurants (restaurant_id, position, is_active) VALUES (?, ?, 1)", [restaurant_id, position]);
-    res.json({ message: "Featured restaurant added" });
+    const { restaurant_id } = req.body || {};
+    if (!restaurant_id) return res.status(400).json({ success: false, error: "restaurant_id required" });
+    await db.execute("UPDATE restaurants SET featured = 1 WHERE id = ?", [restaurant_id]);
+    return res.json({ success: true, message: "Featured restaurant added" });
   } catch (err) {
-    console.error("Error adding featured restaurant (admin):", err);
-    res.status(500).json({ error: "Failed to add featured restaurant" });
-  }
-});
-
-app.put("/api/featured-restaurants/:id/toggle", async (req, res) => {
-  try {
-    const [current] = await db.execute("SELECT is_active FROM featured_restaurants WHERE id = ?", [req.params.id]);
-    if (!current.length) return res.status(404).json({ error: "Featured restaurant not found" });
-    const newStatus = !current[0].is_active;
-    await db.execute("UPDATE featured_restaurants SET is_active = ? WHERE id = ?", [newStatus, req.params.id]);
-    res.json({ message: `Featured ${newStatus ? 'activated' : 'deactivated'}`, is_active: newStatus });
-  } catch (err) {
-    console.error("Error toggling featured restaurant:", err);
-    res.status(500).json({ error: "Failed to toggle" });
-  }
-});
-
-app.put("/api/admin/featured-restaurants/:id/toggle", async (req, res) => {
-  try {
-    const [current] = await db.execute("SELECT is_active FROM featured_restaurants WHERE id = ?", [req.params.id]);
-    if (!current.length) return res.status(404).json({ error: "Not found" });
-    const newStatus = !current[0].is_active;
-    await db.execute("UPDATE featured_restaurants SET is_active = ? WHERE id = ?", [newStatus, req.params.id]);
-    res.json({ message: `Featured ${newStatus ? 'activated' : 'deactivated'}`, is_active: newStatus });
-  } catch (err) {
-    console.error("Error toggling featured (admin):", err);
-    res.status(500).json({ error: "Failed to toggle" });
-  }
-});
-
-app.delete("/api/featured-restaurants/:id", async (req, res) => {
-  try {
-    await db.execute("DELETE FROM featured_restaurants WHERE id = ?", [req.params.id]);
-    res.json({ message: "Removed from featured restaurants" });
-  } catch (err) {
-    console.error("Error removing featured restaurant:", err);
-    res.status(500).json({ error: "Failed to remove" });
+    console.error("Error adding featured (admin):", err?.message);
+    return res.status(500).json({ success: false, error: "Failed to add featured restaurant" });
   }
 });
 
 app.delete("/api/admin/featured-restaurants/:id", async (req, res) => {
   try {
-    await db.execute("DELETE FROM featured_restaurants WHERE id = ?", [req.params.id]);
-    res.json({ message: "Removed" });
+    await db.execute("UPDATE restaurants SET featured = 0 WHERE id = ?", [req.params.id]);
+    return res.json({ success: true, message: "Removed from featured" });
   } catch (err) {
-    console.error("Error removing featured (admin):", err);
-    res.status(500).json({ error: "Failed to remove" });
+    console.error("Error removing featured (admin):", err?.message);
+    return res.status(500).json({ success: false, error: "Failed to remove" });
   }
 });
 
-app.delete("/api/featured-restaurants", async (req, res) => {
+app.put("/api/admin/featured-restaurants/:id/toggle", async (req, res) => {
   try {
-    await db.execute("DELETE FROM featured_restaurants");
-    res.json({ message: "All featured restaurants removed" });
+    const [rows] = await db.execute("SELECT featured FROM restaurants WHERE id = ?", [req.params.id]);
+    if (!rows.length) return res.status(404).json({ success: false, error: "Restaurant not found" });
+    const next = rows[0].featured ? 0 : 1;
+    await db.execute("UPDATE restaurants SET featured = ? WHERE id = ?", [next, req.params.id]);
+    return res.json({ success: true, data: { is_active: next }, message: "Toggled" });
   } catch (err) {
-    console.error("Error clearing featured:", err);
-    res.status(500).json({ error: "Failed to clear" });
+    console.error("Error toggling featured (admin):", err?.message);
+    return res.status(500).json({ success: false, error: "Failed to toggle featured" });
   }
 });
 
-// ===== Top Restaurants =====
-app.get("/api/top-restaurants", async (req, res) => {
+// ===== Top Restaurants (order count from orders) =====
+const topRestaurantsSql = `
+  SELECT r.id as restaurant_id, r.name, r.cuisine, r.image_url, r.status, r.is_top,
+         COALESCE(COUNT(o.id),0) as order_count
+  FROM restaurants r
+  LEFT JOIN orders o ON o.restaurant_id = r.id
+  WHERE r.status = 'approved'
+  GROUP BY r.id
+  ORDER BY order_count DESC, r.id DESC
+`;
+app.get("/api/top-restaurants", async (_req, res) => {
   try {
-    const [results] = await db.execute(`
-      SELECT tr.*, r.name, r.cuisine, r.image_url, r.status AS restaurant_status
-      FROM top_restaurants tr
-      JOIN restaurants r ON tr.restaurant_id = r.id
-      ORDER BY tr.position ASC
-    `);
-    return res.json(results);
+    const [rows] = await db.execute(topRestaurantsSql);
+    return res.json(rows);
   } catch (err) {
     console.error("Error fetching top restaurants:", err?.message);
     return res.status(500).json({ error: "Failed to fetch top restaurants" });
   }
 });
 
-app.post("/api/top-restaurants", async (req, res) => {
+app.get("/api/admin/top-restaurants", async (_req, res) => {
   try {
-    const { restaurant_id, position } = req.body;
-    const [restaurant] = await db.execute("SELECT id FROM restaurants WHERE id = ?", [restaurant_id]);
-    if (!restaurant.length) return res.status(404).json({ error: "Restaurant not found" });
-    const [existing] = await db.execute("SELECT id FROM top_restaurants WHERE restaurant_id = ?", [restaurant_id]);
-    if (existing.length) return res.status(400).json({ error: "Already in top list" });
-    await db.execute("INSERT INTO top_restaurants (restaurant_id, position, is_active) VALUES (?, ?, 1)", [restaurant_id, position]);
-    res.json({ message: "Top restaurant added" });
+    const [rows] = await db.execute(topRestaurantsSql);
+    return res.json({ success: true, data: rows });
   } catch (err) {
-    console.error("Error adding top restaurant:", err);
-    res.status(500).json({ error: "Failed to add top restaurant" });
-  }
-});
-
-app.get("/api/admin/top-restaurants", async (req, res) => {
-  try {
-    const [results] = await db.execute(`
-      SELECT tr.*, r.name, r.cuisine, r.image_url, r.status AS restaurant_status
-      FROM top_restaurants tr
-      JOIN restaurants r ON tr.restaurant_id = r.id
-      ORDER BY tr.position ASC
-    `);
-    res.json(results);
-  } catch (err) {
-    console.error("Error fetching top restaurants (admin):", err);
-    res.status(500).json({ error: "Failed to fetch top restaurants" });
+    console.error("Error fetching top restaurants (admin):", err?.message);
+    return res.status(500).json({ success: false, error: "Failed to fetch top restaurants" });
   }
 });
 
 app.post("/api/admin/top-restaurants", async (req, res) => {
   try {
-    const { restaurant_id, position } = req.body;
-    const [restaurant] = await db.execute("SELECT id FROM restaurants WHERE id = ?", [restaurant_id]);
-    if (!restaurant.length) return res.status(404).json({ error: "Restaurant not found" });
-    const [existing] = await db.execute("SELECT id FROM top_restaurants WHERE restaurant_id = ?", [restaurant_id]);
-    if (existing.length) return res.status(400).json({ error: "Already in top list" });
-    await db.execute("INSERT INTO top_restaurants (restaurant_id, position, is_active) VALUES (?, ?, 1)", [restaurant_id, position]);
-    res.json({ message: "Top restaurant added" });
+    const { restaurant_id } = req.body || {};
+    if (!restaurant_id) return res.status(400).json({ success: false, error: "restaurant_id required" });
+    await db.execute("UPDATE restaurants SET is_top = 1 WHERE id = ?", [restaurant_id]);
+    return res.json({ success: true, message: "Restaurant marked top" });
   } catch (err) {
-    console.error("Error adding top restaurant (admin):", err);
-    res.status(500).json({ error: "Failed to add top restaurant" });
-  }
-});
-
-app.put("/api/top-restaurants/:id/toggle", async (req, res) => {
-  try {
-    const [current] = await db.execute("SELECT is_active FROM top_restaurants WHERE id = ?", [req.params.id]);
-    if (!current.length) return res.status(404).json({ error: "Top restaurant not found" });
-    const newStatus = !current[0].is_active;
-    await db.execute("UPDATE top_restaurants SET is_active = ? WHERE id = ?", [newStatus, req.params.id]);
-    res.json({ message: `Top ${newStatus ? 'activated' : 'deactivated'}`, is_active: newStatus });
-  } catch (err) {
-    console.error("Error toggling top restaurant:", err);
-    res.status(500).json({ error: "Failed to toggle" });
-  }
-});
-
-app.put("/api/admin/top-restaurants/:id/toggle", async (req, res) => {
-  try {
-    const [current] = await db.execute("SELECT is_active FROM top_restaurants WHERE id = ?", [req.params.id]);
-    if (!current.length) return res.status(404).json({ error: "Not found" });
-    const newStatus = !current[0].is_active;
-    await db.execute("UPDATE top_restaurants SET is_active = ? WHERE id = ?", [newStatus, req.params.id]);
-    res.json({ message: `Top ${newStatus ? 'activated' : 'deactivated'}`, is_active: newStatus });
-  } catch (err) {
-    console.error("Error toggling top (admin):", err);
-    res.status(500).json({ error: "Failed to toggle" });
-  }
-});
-
-app.delete("/api/top-restaurants/:id", async (req, res) => {
-  try {
-    await db.execute("DELETE FROM top_restaurants WHERE id = ?", [req.params.id]);
-    res.json({ message: "Removed from top restaurants" });
-  } catch (err) {
-    console.error("Error removing top restaurant:", err);
-    res.status(500).json({ error: "Failed to remove" });
+    console.error("Error marking top restaurant:", err?.message);
+    return res.status(500).json({ success: false, error: "Failed to add top restaurant" });
   }
 });
 
 app.delete("/api/admin/top-restaurants/:id", async (req, res) => {
   try {
-    await db.execute("DELETE FROM top_restaurants WHERE id = ?", [req.params.id]);
-    res.json({ message: "Removed" });
+    await db.execute("UPDATE restaurants SET is_top = 0 WHERE id = ?", [req.params.id]);
+    return res.json({ success: true, message: "Removed from top" });
   } catch (err) {
-    console.error("Error removing top (admin):", err);
-    res.status(500).json({ error: "Failed to remove" });
+    console.error("Error removing top (admin):", err?.message);
+    return res.status(500).json({ success: false, error: "Failed to remove top restaurant" });
+  }
+});
+
+app.put("/api/admin/top-restaurants/:id/toggle", async (req, res) => {
+  try {
+    const [rows] = await db.execute("SELECT is_top FROM restaurants WHERE id = ?", [req.params.id]);
+    if (!rows.length) return res.status(404).json({ success: false, error: "Restaurant not found" });
+    const next = rows[0].is_top ? 0 : 1;
+    await db.execute("UPDATE restaurants SET is_top = ? WHERE id = ?", [next, req.params.id]);
+    return res.json({ success: true, data: { is_top: next }, message: "Toggled" });
+  } catch (err) {
+    console.error("Error toggling top (admin):", err?.message);
+    return res.status(500).json({ success: false, error: "Failed to toggle top" });
   }
 });
 
 // ===== Menu =====
 app.get("/api/admin/menu", async (req, res) => {
   try {
-    const [rows] = await db.execute("SELECT m.*, r.name AS restaurant_name FROM menu m JOIN restaurants r ON m.restaurant_id = r.id ORDER BY m.created_at DESC");
-    return res.json(rows);
+    const [rows] = await db.execute(
+      "SELECT m.*, r.name AS restaurant_name FROM menu m LEFT JOIN restaurants r ON m.restaurant_id = r.id ORDER BY m.id DESC"
+    );
+    return res.json({ success: true, data: rows });
   } catch (err) {
     console.error("Error fetching admin menu:", err?.message);
-    return res.status(500).json({ error: "Failed to fetch admin menu" });
+    return res.status(500).json({ success: false, error: "Failed to fetch admin menu" });
   }
 });
 
@@ -550,7 +471,13 @@ app.get("/api/menu/restaurant/:id", async (req, res) => {
   try {
     const restaurantId = req.params.id;
     const [rows] = await db.execute("SELECT * FROM menu WHERE restaurant_id = ? ORDER BY id DESC", [restaurantId]);
-    return res.json(rows || []);
+    const host = `${req.protocol}://${req.get("host")}`;
+    const withUrls = rows.map(r => ({
+      ...r,
+      image_url: r.image_url || null,
+      image_url_full: r.image_url ? `${host}/uploads/${r.image_url}` : null,
+    }));
+    return res.json(withUrls || []);
   } catch (err) {
     console.error("❌ Error fetching menu by restaurant:", err?.message);
     return res.status(500).json({ success: false, error: "Failed to fetch menu items" });
@@ -666,7 +593,7 @@ app.post("/api/menu", authMiddleware, upload.single("image"), async (req, res) =
     
     const restaurantId = user.restaurant_id;
     const { item_name, price, description, category, is_veg } = req.body;
-    const imageUrl = req.file ? req.file.filename : null;
+    const imageUrl = req.file ? path.join("menu", req.file.filename).replace(/\\/g, "/") : null;
     
     if (!item_name || !price) {
       return res.status(400).json({ success: false, error: "Missing item_name or price" });
@@ -683,7 +610,7 @@ app.post("/api/menu", authMiddleware, upload.single("image"), async (req, res) =
     );
     
     console.log("✅ Menu item added, ID:", result.insertId);
-    return res.json({ success: true, message: "Menu item added successfully", id: result.insertId });
+    return res.json({ success: true, message: "Menu item added successfully", id: result.insertId, image_url });
   } catch (err) {
     console.error("❌ Error adding menu item:", err?.message, err?.sqlMessage);
     return res.status(500).json({ 
@@ -811,6 +738,27 @@ app.get("/api/admin/orders", async (req, res) => {
   } catch (err) {
     console.error("Error fetching all orders:", err);
     res.status(500).json({ error: "Failed to fetch orders" });
+  }
+});
+
+// ===== Admin helpers (agents + map) =====
+app.get("/api/admin/agents", async (_req, res) => {
+  try {
+    const [rows] = await db.execute("SELECT * FROM agents ORDER BY id DESC");
+    return res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error("Error fetching agents:", err?.message);
+    return res.status(500).json({ success: false, error: "Failed to fetch agents" });
+  }
+});
+
+app.get("/api/admin/all-restaurants", async (_req, res) => {
+  try {
+    const [rows] = await db.execute("SELECT id, name, address, latitude as lat, longitude as lng, image_url FROM restaurants WHERE status='approved' ORDER BY id DESC");
+    return res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error("Error fetching all restaurants (map):", err?.message);
+    return res.status(500).json({ success: false, error: "Failed to fetch restaurants" });
   }
 });
 
