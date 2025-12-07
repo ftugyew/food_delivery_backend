@@ -2,73 +2,98 @@ const express = require("express");
 const db = require("../db");
 const router = express.Router();
 
-// View users
+// ================= USERS =================
 router.get("/users", async (req, res) => {
   try {
     const [users] = await db.execute("SELECT id, name, email, role FROM users");
     res.json(users);
   } catch (err) {
-    console.error("Error fetching users:", err);
     res.status(500).json({ error: "Failed to fetch users" });
   }
 });
 
-// View restaurants
+// Users count
+router.get("/users/count", async (req, res) => {
+  const [rows] = await db.execute("SELECT COUNT(*) AS count FROM users");
+  res.json(rows[0]);
+});
+
+// ================= RESTAURANTS =================
 router.get("/restaurants", async (req, res) => {
   try {
     const [rows] = await db.execute("SELECT * FROM restaurants");
     res.json(rows);
   } catch (err) {
-    console.error("Error fetching restaurants:", err);
     res.status(500).json({ error: "Failed to fetch restaurants" });
   }
 });
 
-// View delivery agents
-router.get("/agents", async (req, res) => {
-  try {
-    const [rows] = await db.execute("SELECT * FROM agents");
-    res.json(rows);
-  } catch (err) {
-    console.error("Error fetching agents:", err);
-    res.status(500).json({ error: "Failed to fetch agents" });
-  }
+// Restaurants count
+router.get("/restaurants/count", async (req, res) => {
+  const [rows] = await db.execute("SELECT COUNT(*) AS count FROM restaurants");
+  res.json(rows[0]);
 });
-// Approve restaurant
-router.post("/approve", async (req, res) => {
-  const { restaurant_id } = req.body;
+
+// Pending restaurants for approval
+router.get("/restaurants/pending", async (req, res) => {
+  const [rows] = await db.execute("SELECT * FROM restaurants WHERE status='pending'");
+  res.json(rows);
+});
+
+// Approve restaurant + linked user account
+router.put("/restaurants/approve/:id", async (req, res) => {
+  const id = req.params.id;
   try {
-    await db.execute("UPDATE restaurants SET status='approved' WHERE id=?", [restaurant_id]);
+    await db.execute("UPDATE restaurants SET status='approved' WHERE id=?", [id]);
+    await db.execute("UPDATE users SET status='approved' WHERE restaurant_id=?", [id]);
+
     res.json({ success: true, message: "Restaurant approved" });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
 // Reject restaurant
-router.post("/reject", async (req, res) => {
-  const { restaurant_id } = req.body;
+router.put("/restaurants/reject/:id", async (req, res) => {
+  const id = req.params.id;
   try {
-    await db.execute("UPDATE restaurants SET status='rejected' WHERE id=?", [restaurant_id]);
+    await db.execute("UPDATE restaurants SET status='rejected' WHERE id=?", [id]);
+    await db.execute("UPDATE users SET status='rejected' WHERE restaurant_id=?", [id]);
+
     res.json({ success: true, message: "Restaurant rejected" });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Toggle Top Restaurant feature
+router.put("/restaurants/:id/toggle-top", async (req, res) => {
+  const restId = req.params.id;
+  const [rows] = await db.execute("SELECT is_top FROM restaurants WHERE id=?", [restId]);
+  const newStatus = !rows[0].is_top;
+  await db.execute("UPDATE restaurants SET is_top=? WHERE id=?", [newStatus, restId]);
+  res.json({ message: "Updated top status", is_top: newStatus });
+});
+
+// ================= ORDERS =================
+router.get("/orders/count", async (req, res) => {
+  const [rows] = await db.execute("SELECT COUNT(*) AS count FROM orders");
+  res.json(rows[0]);
+});
+
+router.get("/orders", async (req, res) => {
+  const [rows] = await db.execute("SELECT * FROM orders WHERE status!='delivered'");
+  res.json(rows);
+});
+
+// ================= DELIVERY AGENTS =================
+router.get("/delivery", async (req, res) => {
+  try {
+    const [rows] = await db.execute("SELECT * FROM delivery_agents");
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch agents" });
   }
 });
 
 module.exports = router;
-
-// Toggle is_top status for a restaurant (moved after router initialization)
-router.put("/restaurants/:id/toggle-top", async (req, res) => {
-  try {
-    const restId = req.params.id;
-    const [rows] = await db.execute("SELECT is_top FROM restaurants WHERE id=?", [restId]);
-    if (!rows.length) return res.status(404).json({ error: "Restaurant not found" });
-    const newStatus = !rows[0].is_top;
-    await db.execute("UPDATE restaurants SET is_top=? WHERE id=?", [newStatus, restId]);
-    res.json({ message: `Restaurant ${newStatus ? 'added to' : 'removed from'} Top list`, is_top: newStatus });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Error toggling top status" });
-  }
-});
