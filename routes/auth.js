@@ -1,4 +1,3 @@
-
 const express = require("express");
 const router = express.Router();
 const db = require("../db"); // your DB connection
@@ -6,20 +5,41 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const multer = require("multer");
 const path = require("path");
+const fs = require("fs");
 
 // JWT secret (store in .env in production)
 const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
 
-// Multer setup for file uploads
+// ===== MULTER CONFIG FOR RESTAURANT PHOTO UPLOADS =====
+const uploadsDir = path.join(__dirname, "../uploads");
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, "uploads/");
+    cb(null, uploadsDir);
   },
   filename: (req, file, cb) => {
-    cb(null, Date.now() + path.extname(file.originalname));
+    // Generate unique filename: timestamp + original extension
+    const uniqueName = Date.now() + "-" + Math.round(Math.random() * 1E9) + path.extname(file.originalname);
+    cb(null, uniqueName);
   }
 });
-const upload = multer({ storage });
+
+const upload = multer({ 
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|gif|webp/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+    if (mimetype && extname) {
+      return cb(null, true);
+    }
+    cb(new Error("Only image files are allowed (jpeg, jpg, png, gif, webp)"));
+  }
+});
 
 // ===== Generate Token =====
 function generateToken(user) {
@@ -44,76 +64,21 @@ function normalizeRole(role) {
 
 
 
-// ===== Register =====
-router.post("/register", async (req, res) => {
+// ===== Register Route with Image Upload Support =====
+router.post("/register", upload.single("photo"), async (req, res) => {
   try {
+    console.log("📝 Registration request received");
+    console.log("Body:", req.body);
+    console.log("File:", req.file);
+
     const { name, email, password, phone, role, restaurant_name, cuisine, description, eta, vehicle_type, aadhar } = req.body;
 
+    // Validate required fields
     if (!name || !email || !password || !phone || !role) {
       return res.status(400).json({ error: "All fields required" });
     }
 
     // Check if email already exists
-    const [existingUser] = await db.execute("SELECT email FROM users WHERE email = ?", [email]);
-    if (existingUser.length > 0) {
-      return res.status(400).json({ error: "Email already registered" });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-    let restaurantId = null;
-
-    // Register Restaurant Role
-    if (role === "restaurant") {
-      if (!restaurant_name || !cuisine) {
-        return res.status(400).json({ error: "Restaurant details missing" });
-      }
-
-      // Insert restaurant into DB
-      const [rest] = await db.execute(
-        "INSERT INTO restaurants(name, cuisine, description, eta, status) VALUES (?, ?, ?, ?, 'pending')",
-        [restaurant_name, cuisine, description || "", eta || 30]
-      );
-      restaurantId = rest.insertId;
-    }
-
-    // Register Delivery Agent Role
-    if (role === "delivery_agent") {
-      if (!aadhar || !vehicle_type) {
-        return res.status(400).json({ error: "Delivery agent details missing" });
-      }
-    }
-
-    // Insert user details
-    const [user] = await db.execute(
-      "INSERT INTO users(name, email, phone, password_hash, role, restaurant_id) VALUES (?, ?, ?, ?, ?, ?)",
-      [name, email, phone, hashedPassword, role, restaurantId]
-    );
-
-    return res.json({
-      success: true,
-      message:
-        role === "restaurant"
-          ? "Restaurant registered! Awaiting admin approval"
-          : "Registration successful!",
-      user_id: user.insertId
-    });
-
-  } catch (err) {
-    console.error("Registration Error:", err);
-    return res.status(500).json({ error: "Registration failed" });
-  }
-});
-
-// ===== Register =====
-router.post("/register", async (req, res) => {
-  try {
-    const { name, email, password, phone, role, restaurant_name, cuisine, description, eta, vehicle_type, aadhar } = req.body;
-
-    if (!name || !email || !password || !phone || !role) {
-      return res.status(400).json({ error: "All fields required" });
-    }
-
-    // Prevent duplicate accounts
     const [existingUser] = await db.execute("SELECT id FROM users WHERE email = ?", [email]);
     if (existingUser.length > 0) {
       return res.status(400).json({ error: "Email already registered" });
@@ -122,43 +87,54 @@ router.post("/register", async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
     let restaurantId = null;
 
-    // Restaurant registration
+    // ===== Restaurant Registration with Image =====
     if (role === "restaurant") {
       if (!restaurant_name || !cuisine) {
-        return res.status(400).json({ error: "Restaurant fields missing" });
+        return res.status(400).json({ error: "Restaurant name and cuisine required" });
       }
 
-      const [insertResult] = await db.execute(
-        "INSERT INTO restaurants (name, cuisine, description, eta, status) VALUES (?, ?, ?, ?, 'pending')",
-        [restaurant_name, cuisine, description || "", eta || 30]
+      // Get uploaded image filename (if provided)
+      const imageFilename = req.file ? req.file.filename : null;
+      console.log("🖼️ Restaurant image:", imageFilename);
+
+      // Insert restaurant into database with image_url
+      const [restaurantResult] = await db.execute(
+        "INSERT INTO restaurants (name, cuisine, description, eta, status, image_url) VALUES (?, ?, ?, ?, 'pending', ?)",
+        [restaurant_name, cuisine, description || "", eta || 30, imageFilename]
       );
-      restaurantId = insertResult.insertId;
+      restaurantId = restaurantResult.insertId;
+      console.log("✅ Restaurant created with ID:", restaurantId);
     }
 
-    // Delivery agent registration
+    // ===== Delivery Agent Registration =====
     if (role === "delivery_agent") {
       if (!aadhar || !vehicle_type) {
-        return res.status(400).json({ error: "Delivery agent fields missing" });
+        return res.status(400).json({ error: "Aadhaar and vehicle type required" });
       }
+      // You can add delivery agent specific table insertions here
     }
 
-    // Insert into users table
+    // Insert user into users table
     const [userResult] = await db.execute(
       "INSERT INTO users (name, email, phone, password_hash, role, restaurant_id) VALUES (?, ?, ?, ?, ?, ?)",
       [name, email, phone, hashedPassword, role, restaurantId]
     );
 
-    res.json({
+    console.log("✅ User created with ID:", userResult.insertId);
+
+    return res.json({
       success: true,
       message: role === "restaurant" 
-        ? "Restaurant added. Pending admin approval." 
-        : "Registration successful.",
-      user_id: userResult.insertId
+        ? "Restaurant registered! Awaiting admin approval" 
+        : "Registration successful!",
+      user_id: userResult.insertId,
+      restaurant_id: restaurantId,
+      image_url: req.file ? req.file.filename : null
     });
 
   } catch (err) {
-    console.error("Registration Error:", err);
-    res.status(500).json({ error: "Registration failed" });
+    console.error("❌ Registration Error:", err);
+    return res.status(500).json({ error: "Registration failed: " + err.message });
   }
 });
 
