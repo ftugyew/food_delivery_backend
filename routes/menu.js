@@ -51,19 +51,29 @@ function displayMenuItems(items) {
   const container = document.getElementById("menuContainer");
   container.innerHTML = "";
 
+  const HOST_BASE = API_BASE.replace("/api/restaurant", "");
+
   items.forEach((item) => {
+    const imgSrc = item.image_url
+      ? `${HOST_BASE}/uploads/${item.image_url}`
+      : "/images/no-image.png";
+
     const card = document.createElement("div");
     card.className =
       "menu-card bg-white rounded-xl shadow-lg p-4 hover:scale-105 transition-all text-center";
 
     card.innerHTML = `
-      <img src="${item.image}" alt="${item.name}" 
+      <img src="${imgSrc}" 
+           onerror="this.src='/images/no-image.png'"
+           alt="${item.item_name}" 
            class="w-full h-48 object-cover rounded-lg mb-3">
-      <h3 class="font-semibold text-lg">${item.name}</h3>
+
+      <h3 class="font-semibold text-lg">${item.item_name}</h3>
       <p class="text-green-600 font-medium mb-1">₹${item.price}</p>
       <p class="text-sm text-gray-500 mb-3">${item.category || "Uncategorized"}</p>
+
       <button 
-        onclick="addToCart('${item.id}','${item.name}',${item.price})" 
+        onclick="addToCart('${item.id}','${item.item_name}',${item.price})" 
         class="bg-green-600 text-white px-3 py-1 rounded-lg hover:bg-green-700 transition">
         Add to Cart
       </button>
@@ -72,6 +82,8 @@ function displayMenuItems(items) {
     container.appendChild(card);
   });
 }
+
+
 
 // ---------- CATEGORY FILTER ----------
 function createCategoryFilter(categories, menus) {
