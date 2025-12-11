@@ -11,7 +11,7 @@ const fs = require("fs");
 const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
 
 // ===== MULTER CONFIG FOR RESTAURANT PHOTO UPLOADS =====
-const uploadsDir = path.join(__dirname, "../uploads");
+const uploadsDir = path.join(__dirname, "../uploads/restaurants");
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
