@@ -10,7 +10,6 @@ const fs = require("fs");
 // JWT secret (store in .env in production)
 const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
 
-
 // ===== MULTER CONFIG FOR RESTAURANT PHOTO UPLOADS =====
 const uploadsDir = path.join(__dirname, "../uploads/restaurants");
 if (!fs.existsSync(uploadsDir)) {
@@ -31,24 +30,22 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ storage });
-
-// Route
-router.post("/register", upload.single("restaurantImage"), async (req, res) => {
-
-const upload = multer({ 
+const upload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowedTypes = /jpeg|jpg|png|gif|webp/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const extname = allowedTypes.test(
+      path.extname(file.originalname).toLowerCase()
+    );
     const mimetype = allowedTypes.test(file.mimetype);
-    if (mimetype && extname) {
-      return cb(null, true);
-    }
+
+    if (mimetype && extname) return cb(null, true);
+
     cb(new Error("Only image files are allowed (jpeg, jpg, png, gif, webp)"));
   }
 });
+
 
 // ===== Generate Token =====
 function generateToken(user) {
