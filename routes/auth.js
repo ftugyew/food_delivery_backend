@@ -65,7 +65,7 @@ function normalizeRole(role) {
 
 
 // ===== Register Route with Image Upload Support =====
-router.post("/register", upload.single("photo"), async (req, res) => {
+router.post("/register", upload.single("restaurantImage"), async (req, res) => {
   try {
     console.log("📝 Registration request received");
     console.log("Body:", req.body);
