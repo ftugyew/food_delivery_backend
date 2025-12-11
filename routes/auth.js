@@ -10,6 +10,7 @@ const fs = require("fs");
 // JWT secret (store in .env in production)
 const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
 
+
 // ===== MULTER CONFIG FOR RESTAURANT PHOTO UPLOADS =====
 const uploadsDir = path.join(__dirname, "../uploads/restaurants");
 if (!fs.existsSync(uploadsDir)) {
@@ -21,11 +22,19 @@ const storage = multer.diskStorage({
     cb(null, uploadsDir);
   },
   filename: (req, file, cb) => {
-    // Generate unique filename: timestamp + original extension
-    const uniqueName = Date.now() + "-" + Math.round(Math.random() * 1E9) + path.extname(file.originalname);
+    const uniqueName =
+      Date.now() +
+      "-" +
+      Math.round(Math.random() * 1e9) +
+      path.extname(file.originalname);
     cb(null, uniqueName);
   }
 });
+
+const upload = multer({ storage });
+
+// Route
+router.post("/register", upload.single("restaurantImage"), async (req, res) => {
 
 const upload = multer({ 
   storage,
