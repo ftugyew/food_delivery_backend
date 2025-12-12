@@ -6,60 +6,87 @@ const USE_SQLITE = process.env.USE_SQLITE === "true";
 let db = null;
 
 if (USE_SQLITE) {
-  // ---------------------------
-  //  SQLITE MODE (TESTING)
-  // ---------------------------
   console.log("📌 Using SQLite Database (Testing Mode)");
 
-  const Database = require("better-sqlite3");
+  const sqlite3 = require("sqlite3").verbose();
+  const sqlite = new sqlite3.Database("tindo.db");
 
-  db = new Database("tindo.db"); // Creates file in Render
-  
-  // Create tables if not exist – only minimal tables for testing
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT,
-      email TEXT UNIQUE,
-      phone TEXT,
-      password_hash TEXT,
-      role TEXT,
-      restaurant_id INTEGER
-    );
+  // ===== AUTO CREATE TABLES =====
+  sqlite.serialize(() => {
+    sqlite.run(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        email TEXT UNIQUE,
+        phone TEXT,
+        password_hash TEXT,
+        role TEXT,
+        restaurant_id INTEGER
+      )
+    `);
 
-    CREATE TABLE IF NOT EXISTS restaurants (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT,
-      cuisine TEXT,
-      description TEXT,
-      eta INTEGER,
-      status TEXT,
-      image_url TEXT
-    );
-  `);
+    sqlite.run(`
+      CREATE TABLE IF NOT EXISTS restaurants (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        cuisine TEXT,
+        description TEXT,
+        eta INTEGER,
+        status TEXT,
+        image_url TEXT
+      )
+    `);
 
-  module.exports = {
+    sqlite.run(`
+      CREATE TABLE IF NOT EXISTS orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        restaurant_id INTEGER,
+        items TEXT,
+        total REAL,
+        status TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    sqlite.run(`
+      CREATE TABLE IF NOT EXISTS delivery_agents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        aadhar TEXT,
+        vehicle_type TEXT
+      )
+    `);
+  });
+
+  // ===== UNIFIED QUERY WRAPPER =====
+  db = {
     query(sql, params = []) {
-      const stmt = db.prepare(sql);
+      return new Promise((resolve, reject) => {
+        const isSelect = sql.trim().toLowerCase().startsWith("select");
 
-      if (sql.trim().toLowerCase().startsWith("select")) {
-        return [stmt.all(params)];
-      } else {
-        const info = stmt.run(params);
-        return [{ insertId: info.lastInsertRowid }];
-      }
+        if (isSelect) {
+          sqlite.all(sql, params, (err, rows) => {
+            if (err) return reject(err);
+            resolve([rows]);
+          });
+        } else {
+          sqlite.run(sql, params, function (err) {
+            if (err) return reject(err);
+            resolve([{ insertId: this.lastID }]);
+          });
+        }
+      });
     }
   };
 
 } else {
-  // ---------------------------
-  //  MYSQL MODE (LIVE)
-  // ---------------------------
-  console.log("📌 Using MySQL Database (Live Mode)");
+  // ===== MySQL MODE =====
+  console.log("📌 Using MySQL Database (LIVE MODE)");
 
   const mysql = require("mysql2/promise");
 
-  const pool = mysql.createPool({
+  db = mysql.createPool({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
     password: process.env.DB_PASS,
@@ -68,6 +95,6 @@ if (USE_SQLITE) {
     waitForConnections: true,
     connectionLimit: 10
   });
-
-  module.exports = pool;
 }
+
+module.exports = db;
