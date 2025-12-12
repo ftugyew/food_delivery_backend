@@ -33,7 +33,6 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
-
   fileFilter: (req, file, cb) => {
     const allowedTypes = /jpeg|jpg|png|gif|webp/;
     const extname = allowedTypes.test(
@@ -42,11 +41,9 @@ const upload = multer({
     const mimetype = allowedTypes.test(file.mimetype);
 
     if (mimetype && extname) return cb(null, true);
-
     cb(new Error("Only image files are allowed (jpeg, jpg, png, gif, webp)"));
   }
 });
-
 
 // ===== Generate Token =====
 function generateToken(user) {
@@ -62,31 +59,45 @@ function generateToken(user) {
   );
 }
 
-// Normalize role names for frontend friendliness
 function normalizeRole(role) {
   if (!role) return role;
-  return role === 'delivery_agent' ? 'delivery' : role;
+  return role === "delivery_agent" ? "delivery" : role;
 }
 
+// =======================================================================
+// ========== REGISTER ====================================================
+// =======================================================================
 
-
-
-// ===== Register Route with Image Upload Support =====
 router.post("/register", upload.single("restaurantImage"), async (req, res) => {
   try {
     console.log("📝 Registration request received");
     console.log("Body:", req.body);
     console.log("File:", req.file);
 
-    const { name, email, password, phone, role, restaurant_name, cuisine, description, eta, vehicle_type, aadhar } = req.body;
+    const {
+      name,
+      email,
+      password,
+      phone,
+      role,
+      restaurant_name,
+      cuisine,
+      description,
+      eta,
+      vehicle_type,
+      aadhar
+    } = req.body;
 
-    // Validate required fields
     if (!name || !email || !password || !phone || !role) {
       return res.status(400).json({ error: "All fields required" });
     }
 
     // Check if email already exists
-    const [existingUser] = await db.execute("SELECT id FROM users WHERE email = ?", [email]);
+    const [existingUser] = await db.query(
+      "SELECT id FROM users WHERE email = ?",
+      [email]
+    );
+
     if (existingUser.length > 0) {
       return res.status(400).json({ error: "Email already registered" });
     }
@@ -94,35 +105,37 @@ router.post("/register", upload.single("restaurantImage"), async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
     let restaurantId = null;
 
-    // ===== Restaurant Registration with Image =====
+    // ===== RESTAURANT REGISTER =====
     if (role === "restaurant") {
       if (!restaurant_name || !cuisine) {
-        return res.status(400).json({ error: "Restaurant name and cuisine required" });
+        return res
+          .status(400)
+          .json({ error: "Restaurant name and cuisine required" });
       }
 
-      // Get uploaded image filename (if provided)
       const imageFilename = req.file ? req.file.filename : null;
       console.log("🖼️ Restaurant image:", imageFilename);
 
-      // Insert restaurant into database with image_url
-      const [restaurantResult] = await db.execute(
+      const [restaurantResult] = await db.query(
         "INSERT INTO restaurants (name, cuisine, description, eta, status, image_url) VALUES (?, ?, ?, ?, 'pending', ?)",
         [restaurant_name, cuisine, description || "", eta || 30, imageFilename]
       );
+
       restaurantId = restaurantResult.insertId;
       console.log("✅ Restaurant created with ID:", restaurantId);
     }
 
-    // ===== Delivery Agent Registration =====
+    // ===== DELIVERY AGENT REGISTER =====
     if (role === "delivery_agent") {
       if (!aadhar || !vehicle_type) {
-        return res.status(400).json({ error: "Aadhaar and vehicle type required" });
+        return res
+          .status(400)
+          .json({ error: "Aadhaar and vehicle type required" });
       }
-      // You can add delivery agent specific table insertions here
     }
 
-    // Insert user into users table
-    const [userResult] = await db.execute(
+    // Create user
+    const [userResult] = await db.query(
       "INSERT INTO users (name, email, phone, password_hash, role, restaurant_id) VALUES (?, ?, ?, ?, ?, ?)",
       [name, email, phone, hashedPassword, role, restaurantId]
     );
@@ -131,185 +144,149 @@ router.post("/register", upload.single("restaurantImage"), async (req, res) => {
 
     return res.json({
       success: true,
-      message: role === "restaurant" 
-        ? "Restaurant registered! Awaiting admin approval" 
-        : "Registration successful!",
+      message:
+        role === "restaurant"
+          ? "Restaurant registered! Awaiting admin approval"
+          : "Registration successful!",
       user_id: userResult.insertId,
       restaurant_id: restaurantId,
       image_url: req.file ? req.file.filename : null
     });
-
   } catch (err) {
     console.error("❌ Registration Error:", err);
     return res.status(500).json({ error: "Registration failed: " + err.message });
   }
 });
 
-// ===== Login =====
+// =======================================================================
+// ========== LOGIN =======================================================
+// =======================================================================
+
 router.post("/login", async (req, res) => {
   console.log("📩 LOGIN REQUEST BODY:", req.body);
 
   try {
     const { email, password } = req.body;
-    console.log("🔍 Checking login for:", email);
 
-
-    if (!email || !password) {
-      console.log("⚠️ Missing fields!");
+    if (!email || !password)
       return res.status(400).json({ error: "Email and password required" });
-    }
 
-    // Fetch user by email only
-    const [rows] = await db.execute("SELECT * FROM users WHERE email = ?", [email]);
-    console.log("🔎 DB Query Result:", rows); // ⭐ What user data returned?
+    const [rows] = await db.query(
+      "SELECT * FROM users WHERE email = ?",
+      [email]
+    );
 
-    if (rows.length === 0) {
-      console.log("❌ No user found with this email");
+    if (rows.length === 0)
       return res.status(401).json({ error: "Invalid email or password" });
-    }
 
     const user = rows[0];
-    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
-    console.log("🔐 Password Match:", isPasswordValid); // ⭐ True / False
+    const isPasswordValid = await bcrypt.compare(
+      password,
+      user.password_hash
+    );
 
-    if (!isPasswordValid) {
-      console.log("❌ Wrong password entered");
+    if (!isPasswordValid)
       return res.status(401).json({ error: "Invalid email or password" });
-    }
 
     const normalizedRole = normalizeRole(user.role);
-    console.log("👤 Role Detected:", normalizedRole); // ⭐ Who is logging in?
 
+    // Restaurant owner checks
+    if (normalizedRole === "restaurant") {
+      const [restRows] = await db.query(
+        "SELECT status FROM restaurants WHERE id = ?",
+        [user.restaurant_id]
+      );
 
-    // Restaurant owner: check restaurant status
-    if (normalizedRole === 'restaurant') {
-      const restaurantId = user.restaurant_id;
-      if (restaurantId) {
-        const [restRows] = await db.execute("SELECT status FROM restaurants WHERE id = ?", [restaurantId]);
-        if (restRows.length > 0) {
-          const restaurantStatus = restRows[0].status;
-          
-          if (restaurantStatus === 'pending') {
-            return res.json({
-              success: false,
-              status: "pending",
-              role: "restaurant",
-              message: "Waiting for admin approval",
-              user: {
-                id: user.id,
-                name: user.name,
-                email: user.email,
-                role: normalizedRole,
-                restaurant_id: restaurantId
-              }
-            });
-          } else if (restaurantStatus === 'rejected') {
-            return res.json({
-              success: false,
-              status: "rejected",
-              role: "restaurant",
-              message: "Your restaurant was rejected",
-              user: {
-                id: user.id,
-                name: user.name,
-                email: user.email,
-                role: normalizedRole,
-                restaurant_id: restaurantId
-              }
-            });
-          } else if (restaurantStatus === 'approved') {
-            // Generate token and return success
-            const token = generateToken(user);
-            return res.json({
-              success: true,
-              status: "approved",
-              role: "restaurant",
-              redirectTo: "/restaurant-dashboard.html",
-              token,
-              user: {
-                id: user.id,
-                name: user.name,
-                email: user.email,
-                role: normalizedRole,
-                restaurant_id: restaurantId
-              }
-            });
-          }
+      if (restRows.length > 0) {
+        const status = restRows[0].status;
+
+        if (status === "pending") {
+          return res.json({
+            success: false,
+            status: "pending",
+            message: "Waiting for admin approval"
+          });
+        }
+
+        if (status === "rejected") {
+          return res.json({
+            success: false,
+            status: "rejected",
+            message: "Your restaurant was rejected"
+          });
+        }
+
+        if (status === "approved") {
+          const token = generateToken(user);
+          return res.json({
+            success: true,
+            status: "approved",
+            role: "restaurant",
+            redirectTo: "/restaurant-dashboard.html",
+            token,
+            user
+          });
         }
       }
     }
 
-    // Admin: always allow
-    if (normalizedRole === 'admin') {
+    // ADMIN
+    if (normalizedRole === "admin") {
       const token = generateToken(user);
       return res.json({
         success: true,
         role: "admin",
         redirectTo: "/admin-dashboard.html",
         token,
-        user: {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          role: normalizedRole
-        }
+        user
       });
     }
 
-    // Delivery agent: allow
-    if (normalizedRole === 'delivery') {
+    // DELIVERY AGENT
+    if (normalizedRole === "delivery") {
       const token = generateToken(user);
       return res.json({
         success: true,
         role: "delivery",
         redirectTo: "/delivery-dashboard.html",
         token,
-        user: {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          role: normalizedRole
-        }
+        user
       });
     }
 
-    // Customer or unknown role: default behavior
+    // CUSTOMER
     const token = generateToken(user);
     return res.json({
       success: true,
       role: "customer",
       redirectTo: "/index.html",
       token,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: normalizedRole
-      }
+      user
     });
-
   } catch (err) {
     console.error("Login Error:", err);
     res.status(500).json({ error: "Login failed" });
   }
 });
 
-// ===== Middleware: Protect Routes =====
+// =======================================================================
+// ========== AUTH MIDDLEWARE ============================================
+// =======================================================================
+
 function authMiddleware(req, res, next) {
-  // Primary: Authorization header
   let token = req.headers.authorization?.split(" ")[1];
 
-  // Fallbacks: query param (used when uploading multipart/form-data where headers may be stripped)
-  if (!token && req.query && req.query.token) token = req.query.token;
+  if (!token && req.query?.token) token = req.query.token;
 
-  if (!token) return res.status(401).json({ error: "No token provided" });
+  if (!token)
+    return res.status(401).json({ error: "No token provided" });
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded; // { id, email, role, restaurant_id }
+    req.user = decoded;
     next();
   } catch (err) {
-    console.error('authMiddleware: token verification failed', err.message || err);
+    console.error("Invalid Token:", err.message);
     return res.status(403).json({ error: "Invalid token" });
   }
 }
