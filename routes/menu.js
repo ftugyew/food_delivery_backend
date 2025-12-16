@@ -1,80 +1,70 @@
 // menu.js — Tindo Restaurant Menu Frontend
-// Fetch and display all menu items from backend
 
-// ---------- CONFIGURATION ----------
-const API_BASE = "/api/restaurant"; // Backend API route base
+const API_BASE =
+  "https://food-delivery-backend-cw3m.onrender.com/api/restaurant";
 
-// ---------- MAIN FUNCTION ----------
+const IMAGE_BASE_URL =
+  "https://food-delivery-backend-cw3m.onrender.com/uploads";
+
 async function loadMenu() {
   try {
-    // Get restaurant ID from localStorage or query param
     const restaurantId =
       localStorage.getItem("restaurantId") ||
       new URLSearchParams(window.location.search).get("id");
 
     if (!restaurantId) {
-      console.error("No restaurantId found in localStorage or URL.");
       document.getElementById("menuContainer").innerHTML =
         "<p class='text-red-600'>No restaurant ID found.</p>";
       return;
     }
 
-    // Fetch menus from server
     const response = await fetch(`${API_BASE}/${restaurantId}/menu`);
     if (!response.ok) throw new Error("Failed to fetch menu data");
-    const menus = await response.json();
 
+    const menus = await response.json();
     const container = document.getElementById("menuContainer");
     container.innerHTML = "";
 
     if (!menus.length) {
       container.innerHTML =
-        "<p class='text-gray-600 text-center w-full'>No menu items found for this restaurant.</p>";
+        "<p class='text-gray-600 text-center'>No menu items found.</p>";
       return;
     }
 
-    // Optional: extract categories
     const categories = [...new Set(menus.map((m) => m.category || "Other"))];
     createCategoryFilter(categories, menus);
-
-    // Display all items initially
     displayMenuItems(menus);
   } catch (err) {
     console.error("Error loading menu:", err);
     document.getElementById("menuContainer").innerHTML =
-      "<p class='text-red-600'>Failed to load menu. Please try again later.</p>";
+      "<p class='text-red-600'>Failed to load menu.</p>";
   }
 }
 
-// ---------- DISPLAY MENU ITEMS ----------
 function displayMenuItems(items) {
   const container = document.getElementById("menuContainer");
   container.innerHTML = "";
 
-  const HOST_BASE = API_BASE.replace("/api/restaurant", "");
-
   items.forEach((item) => {
     const imgSrc = item.image_url
-      ? `${HOST_BASE}/uploads/${item.image_url}`
-      : "/images/no-image.png";
+      ? `${IMAGE_BASE_URL}/${item.image_url}`
+      : "assets/placeholder.jpg";
 
     const card = document.createElement("div");
     card.className =
       "menu-card bg-white rounded-xl shadow-lg p-4 hover:scale-105 transition-all text-center";
 
     card.innerHTML = `
-      <img src="${imgSrc}" 
-           onerror="this.src='/images/no-image.png'"
-           alt="${item.item_name}" 
+      <img src="${imgSrc}"
+           onerror="this.src='assets/placeholder.jpg'"
            class="w-full h-48 object-cover rounded-lg mb-3">
 
       <h3 class="font-semibold text-lg">${item.item_name}</h3>
-      <p class="text-green-600 font-medium mb-1">₹${item.price}</p>
-      <p class="text-sm text-gray-500 mb-3">${item.category || "Uncategorized"}</p>
+      <p class="text-green-600 font-medium">₹${item.price}</p>
+      <p class="text-sm text-gray-500 mb-3">${item.category || "Other"}</p>
 
-      <button 
-        onclick="addToCart('${item.id}','${item.item_name}',${item.price})" 
-        class="bg-green-600 text-white px-3 py-1 rounded-lg hover:bg-green-700 transition">
+      <button onclick="addToCart('${item.id}','${item.item_name}',${item.price})"
+        class="bg-green-600 text-white px-3 py-1 rounded-lg rounded-lg hover:bg-green-700">
         Add to Cart
       </button>
     `;
@@ -83,9 +73,6 @@ function displayMenuItems(items) {
   });
 }
 
-
-
-// ---------- CATEGORY FILTER ----------
 function createCategoryFilter(categories, menus) {
   const filterContainer = document.getElementById("filterContainer");
   if (!filterContainer) return;
@@ -97,29 +84,23 @@ function createCategoryFilter(categories, menus) {
     </select>
   `;
 
-  document
-    .getElementById("categorySelect")
-    .addEventListener("change", (e) => {
-      const selected = e.target.value;
-      if (selected === "all") displayMenuItems(menus);
-      else displayMenuItems(menus.filter((m) => m.category === selected));
-    });
+  document.getElementById("categorySelect").addEventListener("change", (e) => {
+    const selected = e.target.value;
+    selected === "all"
+      ? displayMenuItems(menus)
+      : displayMenuItems(menus.filter((m) => m.category === selected));
+  });
 }
 
-// ---------- ADD TO CART ----------
 function addToCart(id, name, price) {
   let cart = JSON.parse(localStorage.getItem("tindo_cart")) || [];
   const existing = cart.find((item) => item.id === id);
 
-  if (existing) {
-    existing.quantity += 1;
-  } else {
-    cart.push({ id, name, price, quantity: 1 });
-  }
+  if (existing) existing.quantity += 1;
+  else cart.push({ id, name, price, quantity: 1 });
 
   localStorage.setItem("tindo_cart", JSON.stringify(cart));
   alert(`${name} added to cart ✅`);
 }
 
-// ---------- INIT ----------
 document.addEventListener("DOMContentLoaded", loadMenu);
