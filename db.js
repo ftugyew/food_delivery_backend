@@ -6,24 +6,30 @@ const db = mysql.createPool({
   user: process.env.DB_USER,
   password: process.env.DB_PASS,
   database: process.env.DB_NAME,
-  port: 3306,
+  port: process.env.DB_PORT || 3306,
   waitForConnections: true,
   connectionLimit: 5,
   queueLimit: 0,
   connectTimeout: 30000
 });
 
-async function testConnection() {
-  try {
-    const conn = await db.getConnection();
-    console.log("✅ MySQL Connected Successfully");
-    conn.release();
-  } catch (err) {
-    console.error("⚠️ MySQL not ready yet:", err.code);
-    // DO NOT exit process
+// 🔁 Wait & retry until MySQL is ready
+async function waitForDB(retries = 10) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const conn = await db.getConnection();
+      console.log("✅ MySQL Connected Successfully");
+      conn.release();
+      return;
+    } catch (err) {
+      console.log(`⏳ Waiting for MySQL... (${i + 1}/${retries})`);
+      await new Promise(r => setTimeout(r, 3000));
+    }
   }
+  console.error("❌ MySQL still not reachable after retries");
 }
 
-testConnection();
+// Call it once on startup
+waitForDB();
 
 module.exports = db;
