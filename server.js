@@ -15,7 +15,7 @@ const db = require("./db");
 const app = express();
 const server = http.createServer(app);
 const adminRoutes = require("./routes/admin");
-const imageUrl = `menu/${req.file.filename}`;
+
 
 
 

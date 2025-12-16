@@ -6,6 +6,8 @@ const API_BASE =
 const IMAGE_BASE_URL =
   "https://food-delivery-backend-cw3m.onrender.com/uploads";
 
+const imageUrl = `menu/${req.file.filename}`;
+
 async function loadMenu() {
   try {
     const restaurantId =
@@ -102,5 +104,54 @@ function addToCart(id, name, price) {
   localStorage.setItem("tindo_cart", JSON.stringify(cart));
   alert(`${name} added to cart ✅`);
 }
+router.post(
+  "/",
+  authMiddleware,
+  upload.single("image"),
+  async (req, res) => {
+    try {
+      const {
+        item_name,
+        price,
+        description,
+        category,
+        is_veg
+      } = req.body;
+
+      const restaurantId = req.user.restaurant_id;
+
+      // ✅ THIS IS THE CORRECT PLACE
+      const imageUrl = req.file
+        ? `menu/${req.file.filename}`
+        : null;
+
+      const [result] = await db.execute(
+        `INSERT INTO menu
+         (item_name, price, description, category, is_veg, image_url, restaurant_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          item_name,
+          price,
+          description,
+          category,
+          is_veg,
+          imageUrl,
+          restaurantId
+        ]
+      );
+
+      res.json({
+        success: true,
+        menu_id: result.insertId,
+        image_url: imageUrl
+      });
+
+    } catch (err) {
+      console.error("Error adding menu item:", err);
+      res.status(500).json({ error: "Failed to add menu item" });
+    }
+  }
+);
+
 
 document.addEventListener("DOMContentLoaded", loadMenu);
