@@ -467,6 +467,7 @@ app.get("/api/restaurant/:id/menu", async (req, res) => {
     return res.json(rows);
   } catch (err) {
     console.error("Error fetching menus:", err?.message);
+    
     return res.status(500).json({ message: "Error fetching menu items" });
   }
 });
