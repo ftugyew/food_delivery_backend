@@ -16,6 +16,32 @@ const app = express();
 const server = http.createServer(app);
 const adminRoutes = require("./routes/admin");
 
+// Log the incoming Origin for visibility
+app.use((req, _res, next) => {
+  console.log('[CORS] Origin:', req.headers.origin || '(no origin)');
+  next();
+});
+
+// Single, global CORS middleware (must come before any routes)
+const vercelPattern = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
+const localhostPattern = /^http:\/\/localhost:(3000|5500|5501)$/;
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true); // allow Postman/cURL (no Origin)
+    if (vercelPattern.test(origin) || localhostPattern.test(origin)) {
+      return callback(null, true);
+    }
+    console.warn('❌ CORS blocked:', origin);
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET','HEAD','PUT','PATCH','POST','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization','X-Requested-With'],
+  maxAge: 86400
+}));
+
+
 
 
 const allowedOrigins = [
