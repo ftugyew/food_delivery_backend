@@ -473,11 +473,14 @@ app.get("/api/menu/restaurant/:id", async (req, res) => {
     const restaurantId = req.params.id;
     const [rows] = await db.execute("SELECT * FROM menu WHERE restaurant_id = ? ORDER BY id DESC", [restaurantId]);
     const host = `${req.protocol}://${req.get("host")}`;
-    const withUrls = rows.map(r => ({
-      ...r,
-      image_url: r.image_url || null,
-      image_url_full: r.image_url ? `${host}/uploads/${r.image_url}` : null,
-    }));
+    const withUrls = rows.map(r => {
+      const rel = r.image_url ? (String(r.image_url).includes("menu/") ? r.image_url : `menu/${r.image_url}`) : null;
+      return {
+        ...r,
+        image_url: r.image_url || null,
+        image_url_full: rel ? `${host}/uploads/${rel}` : null,
+      };
+    });
     return res.json(withUrls || []);
   } catch (err) {
     console.error("❌ Error fetching menu by restaurant:", err?.message);
@@ -625,7 +628,7 @@ app.post("/api/menu", authMiddleware, upload.single("image"), async (req, res) =
 app.post("/api/menu/test-add", upload.single("image"), async (req, res) => {
   try {
     const { item_name, price, description, category } = req.body || {};
-    const imageUrl = req.file ? req.file.filename : null;
+    const imageUrl = req.file ? path.join("menu", req.file.filename).replace(/\\/g, "/") : null;
     if (!item_name || !price) return res.status(400).json({ error: "Missing item_name or price" });
     const restaurantId = 1;
     const [result] = await db.execute(
