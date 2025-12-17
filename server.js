@@ -18,26 +18,31 @@ const adminRoutes = require("./routes/admin");
 
 
 
-
 const allowedOrigins = [
-  "http://localhost:5500", // local development
-  "https://food-delivery-backend-cw3m.onrender.com", // backend domain
-  "https://food-ameerpet.vercel.app" // if deployed frontend
+  "http://localhost:3000",
+  "http://127.0.0.1:5500",
+  "http://127.0.0.1:5501",
+  "https://food-delivery-d9rhmxj1q-sravans-projects-f917a030.vercel.app",
+  "https://food-delivery-backend-cw3m.onrender.com"
 ];
 
-// ===== 1. CORS (FIRST) =====
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      console.log("❌ CORS blocked:", origin);
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  credentials: true
-}));
 
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // allow requests with no origin (Postman, mobile apps)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.error("❌ CORS blocked:", origin);
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true
+  })
+);
 // ===== 2. STATIC FILES (BEFORE parsing - public access, no auth) =====
 // Reuse the same uploads root as multer to avoid mismatched paths and to support persistent disks via UPLOADS_ROOT
 const { uploadsRoot } = require("./config/multer");
