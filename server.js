@@ -58,6 +58,15 @@ const io = new Server(server, {
   }
 });
 
+// ===== Banner upload (multer) =====
+const bannersDir = path.join(__dirname, "uploads", "banners");
+try { fs.mkdirSync(bannersDir, { recursive: true }); } catch (_) {}
+const bannerStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, bannersDir),
+  filename: (_req, file, cb) => cb(null, `${Date.now()}-${Math.round(Math.random()*1e9)}${path.extname(file.originalname)}`)
+});
+const upload = multer({ storage: bannerStorage });
+
 // ===== 6. AUTH MIDDLEWARE =====
 const { router: authRoutes, authMiddleware } = require("./routes/auth");
 
@@ -453,79 +462,6 @@ app.get("/api/admin/menu", async (req, res) => {
   }
 });
 
-// GET /api/menu/restaurant/:id - Get menu items for a restaurant (no auth required)
-app.get("/api/menu/restaurant/:id", async (req, res) => {
-  try {
-    const restaurantId = req.params.id;
-    const [rows] = await db.execute("SELECT * FROM menu WHERE restaurant_id = ? ORDER BY id DESC", [restaurantId]);
-    const host = `${req.protocol}://${req.get("host")}`;
-    const withUrls = rows.map(r => {
-      const rel = r.image_url ? (String(r.image_url).includes("menu/") ? r.image_url : `menu/${r.image_url}`) : null;
-      return {
-        ...r,
-        image_url: r.image_url || null,
-        image_url_full: rel ? `${host}/uploads/${rel}` : null,
-      };
-    });
-    return res.json(withUrls || []);
-  } catch (err) {
-    console.error("❌ Error fetching menu by restaurant:", err?.message);
-    return res.status(500).json({ success: false, error: "Failed to fetch menu items" });
-  }
-});
-
-// POST /api/menu/add - Add menu item (JSON body, authMiddleware, no file upload)
-app.post("/api/menu/add", authMiddleware, async (req, res) => {
-  try {
-    const user = req.user || {};
-    console.log("📝 Add menu item - User:", user.id, "Role:", user.role, "Restaurant ID:", user.restaurant_id);
-    
-    // Validate user
-    if (!user.restaurant_id) {
-      return res.status(400).json({ 
-        success: false,
-        error: "No restaurant_id found", 
-        details: "Please login as a restaurant owner"
-      });
-    }
-    
-    // Get values from JSON body
-    const { item_name, price, description, category, is_veg } = req.body;
-    
-    // Validate required fields
-    if (!item_name || price === undefined || price === null) {
-      return res.status(400).json({ 
-        success: false, 
-        error: "Missing item_name or price" 
-      });
-    }
-    
-    const restaurantId = user.restaurant_id;
-    const finalIsVeg = is_veg === 1 || is_veg === true ? 1 : 0;
-    
-    console.log("📝 Inserting menu item:", { item_name, price, description, category, is_veg: finalIsVeg, restaurantId });
-    
-    // Insert into menu table
-    const [result] = await db.execute(
-      "INSERT INTO menu (restaurant_id, item_name, description, price, category, is_veg) VALUES (?, ?, ?, ?, ?, ?)",
-      [restaurantId, item_name, description || "", Number(price) || 0, category || "Uncategorized", finalIsVeg]
-    );
-    
-    console.log("✅ Menu item added, ID:", result.insertId);
-    return res.json({ 
-      success: true, 
-      message: "Menu item added successfully",
-      id: result.insertId 
-    });
-  } catch (err) {
-    console.error("❌ Error adding menu item:", err?.message, err?.sqlMessage);
-    return res.status(500).json({ 
-      success: false,
-      error: "Failed to add menu item", 
-      details: err.message || err.sqlMessage 
-    });
-  }
-});
 
 app.get("/api/restaurant/:id/menu", async (req, res) => {
   try {
@@ -537,131 +473,6 @@ app.get("/api/restaurant/:id/menu", async (req, res) => {
   }
 });
 
-// GET /api/menu - Get menu items for authenticated restaurant user
-app.get("/api/menu", authMiddleware, async (req, res) => {
-  try {
-    const user = req.user || {};
-    
-    if (!user.restaurant_id) {
-      return res.status(400).json({ 
-        success: false, 
-        error: "No restaurant_id associated with this user. Please login as a restaurant owner." 
-      });
-    }
-    
-    const restaurantId = user.restaurant_id;
-    const [rows] = await db.execute("SELECT * FROM menu WHERE restaurant_id = ? ORDER BY id DESC", [restaurantId]);
-    return res.json({ success: true, data: rows });
-  } catch (err) {
-    console.error("Error fetching menu:", err?.message);
-    return res.status(500).json({ success: false, error: "Failed to fetch menu" });
-  }
-});
-
-app.get("/api/menu/by-restaurant/:id", async (req, res) => {
-  try {
-    const [rows] = await db.execute("SELECT * FROM menu WHERE restaurant_id = ? ORDER BY created_at DESC", [req.params.id]);
-    return res.json(rows);
-  } catch (err) {
-    console.error("Error fetching menu by restaurant:", err?.message);
-    return res.status(500).json({ message: "Error fetching menu items" });
-  }
-});
-
-app.post("/api/menu", authMiddleware, upload.single("image"), async (req, res) => {
-  try {
-    const user = req.user || {};
-    console.log("📝 Add menu item (multipart) - User:", user.id, "Role:", user.role, "Restaurant ID:", user.restaurant_id);
-    
-    if (!user.restaurant_id) {
-      return res.status(400).json({ 
-        success: false,
-        error: "No restaurant_id found", 
-        details: "Please login as a restaurant owner"
-      });
-    }
-    
-    const restaurantId = user.restaurant_id;
-    const { item_name, price, description, category, is_veg } = req.body;
-    const imageUrl = req.file ? path.join("menu", req.file.filename).replace(/\\/g, "/") : null;
-    
-    if (!item_name || !price) {
-      return res.status(400).json({ success: false, error: "Missing item_name or price" });
-    }
-    
-    // Convert is_veg to 1/0
-    const finalIsVeg = is_veg === 'non-veg' || is_veg === 0 ? 0 : 1;
-    
-    console.log("📝 Adding menu item (multipart):", { item_name, price, description, category, is_veg: finalIsVeg, imageUrl, restaurantId });
-    
-    const [result] = await db.execute(
-      "INSERT INTO menu (restaurant_id, item_name, description, price, category, is_veg, image_url) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [restaurantId, item_name, description || "", Number(price) || 0, category || "Uncategorized", finalIsVeg, imageUrl]
-    );
-    
-    console.log("✅ Menu item added, ID:", result.insertId);
-    return res.json({ success: true, message: "Menu item added successfully", id: result.insertId, image_url });
-  } catch (err) {
-    console.error("❌ Error adding menu item:", err?.message, err?.sqlMessage);
-    return res.status(500).json({ 
-      success: false,
-      error: "Failed to add menu item", 
-      details: err.message || err.sqlMessage 
-    });
-  }
-});
-
-app.post("/api/menu/test-add", upload.single("image"), async (req, res) => {
-  try {
-    const { item_name, price, description, category } = req.body || {};
-    const imageUrl = req.file ? path.join("menu", req.file.filename).replace(/\\/g, "/") : null;
-    if (!item_name || !price) return res.status(400).json({ error: "Missing item_name or price" });
-    const restaurantId = 1;
-    const [result] = await db.execute(
-      "INSERT INTO menu (restaurant_id, item_name, description, price, category, image_url, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())",
-      [restaurantId, item_name, description || "", Number(price) || 0, category || null, imageUrl]
-    );
-    return res.json({ message: "Test dish added", id: result.insertId });
-  } catch (err) {
-    console.error("TEST_ADD error:", err?.message);
-    return res.status(500).json({ error: "Test add failed", details: err.message });
-  }
-});
-
-app.get("/api/menu/my", authMiddleware, async (req, res) => {
-  try {
-    const user = req.user || {};
-    
-    if (!user.restaurant_id) {
-      return res.status(400).json({ 
-        success: false, 
-        error: "No restaurant_id associated with this user. Please login as a restaurant owner." 
-      });
-    }
-    
-    const restaurantId = user.restaurant_id;
-    const [rows] = await db.execute("SELECT * FROM menu WHERE restaurant_id = ? ORDER BY created_at DESC", [restaurantId]);
-    return res.json({ success: true, data: rows });
-  } catch (err) {
-    console.error("Error fetching my menu:", err?.message);
-    return res.status(500).json({ success: false, error: "Failed to fetch menu" });
-  }
-});
-
-app.delete("/api/menu/:id", authMiddleware, async (req, res) => {
-  try {
-    const user = req.user || {};
-    const [rows] = await db.execute("SELECT restaurant_id FROM menu WHERE id = ?", [req.params.id]);
-    if (!rows.length) return res.status(404).json({ error: "Menu item not found" });
-    const ownerId = rows[0].restaurant_id;
-    if (user.role && user.role !== "admin" && user.restaurant_id !== ownerId) return res.status(403).json({ error: "Not authorized" });
-    await db.execute("DELETE FROM menu WHERE id = ?", [req.params.id]);
-    return res.json({ message: "Deleted" });
-  } catch (err) {
-    console.error("Error deleting menu item:", err?.message);
-    return res.status(500).json({ error: "Failed to delete menu item" });
-  }
-});
 
 // ===== Search =====
 app.get('/api/search', async (req, res) => {
