@@ -461,8 +461,6 @@ app.get("/api/admin/menu", async (req, res) => {
     return res.status(500).json({ success: false, error: "Failed to fetch admin menu" });
   }
 });
-
-
 app.get("/api/restaurant/:id/menu", async (req, res) => {
   try {
     const [rows] = await db.execute("SELECT * FROM menu WHERE restaurant_id = ?", [req.params.id]);
