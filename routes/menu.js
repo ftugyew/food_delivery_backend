@@ -1,53 +1,31 @@
-// menu.js — Tindo Restaurant Menu Frontend
+// routes/menu.js - Menu routes with proper Multer
+const express = require("express");
+const router = express.Router();
+const { menuUpload } = require("../config/multer");
+const menuController = require("../controllers/menu.controller");
+const { authMiddleware } = require("./auth");
 
-const API_BASE =
-  "https://food-delivery-backend-cw3m.onrender.com/api/restaurant";
+// ===== PUBLIC ROUTES =====
+// Get menu items for a specific restaurant (no auth needed)
+router.get("/restaurant/:id", menuController.getMenuByRestaurant);
+router.get("/by-restaurant/:id", menuController.getMenuByRestaurant); // Alias
 
-const IMAGE_BASE_URL =
-  "https://food-delivery-backend-cw3m.onrender.com/uploads";
+// ===== PROTECTED ROUTES (REQUIRE AUTH) =====
+// Get menu for authenticated restaurant owner
+router.get("/", authMiddleware, menuController.getMyMenu);
+router.get("/my", authMiddleware, menuController.getMyMenu); // Alias
 
-async function loadMenu() {
-  try {
-    const restaurantId =
-      localStorage.getItem("restaurantId") ||
-      new URLSearchParams(window.location.search).get("id");
+// Add menu item (with image upload)
+router.post("/", authMiddleware, menuUpload.single("image"), menuController.addMenuItem);
+router.post("/add", authMiddleware, menuUpload.single("image"), menuController.addMenuItem); // Alias
 
-    if (!restaurantId) {
-      document.getElementById("menuContainer").innerHTML =
-        "<p class='text-red-600'>No restaurant ID found.</p>";
-      return;
-    }
+// Update menu item
+router.put("/:id", authMiddleware, menuUpload.single("image"), menuController.updateMenuItem);
 
-    const response = await fetch(`${API_BASE}/${restaurantId}/menu`);
-    if (!response.ok) throw new Error("Failed to fetch menu data");
+// Delete menu item
+router.delete("/:id", authMiddleware, menuController.deleteMenuItem);
 
-    const menus = await response.json();
-    const container = document.getElementById("menuContainer");
-    container.innerHTML = "";
-
-    if (!menus.length) {
-      container.innerHTML =
-        "<p class='text-gray-600 text-center'>No menu items found.</p>";
-      return;
-    }
-
-    const categories = [...new Set(menus.map(m => m.category || "Other"))];
-    createCategoryFilter(categories, menus);
-    displayMenuItems(menus);
-
-  } catch (err) {
-    console.error("Error loading menu:", err);
-    document.getElementById("menuContainer").innerHTML =
-      "<p class='text-red-600'>Failed to load menu.</p>";
-  }
-}
-
-function displayMenuItems(items) {
-  const container = document.getElementById("menuContainer");
-  container.innerHTML = "";
-
-  items.forEach(item => {
-    const imgSrc = item.image_url
+module.exports = router;
       ? `${IMAGE_BASE_URL}/${item.image_url}`
       : "assets/placeholder.jpg";
 

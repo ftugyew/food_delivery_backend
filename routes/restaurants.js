@@ -1,9 +1,41 @@
 const express = require("express");
-const db = require("../db");
 const router = express.Router();
+const { restaurantUpload } = require("../config/multer");
+const restaurantController = require("../controllers/restaurant.controller");
+const { authMiddleware } = require("./auth");
 
-// Add restaurant
-router.post("/", async (req, res) => {
+// ===== PUBLIC ROUTES =====
+// Get all approved restaurants
+router.get("/", restaurantController.getAllRestaurants);
+
+// Get restaurant by ID
+router.get("/:id", restaurantController.getRestaurantById);
+
+// Get restaurant + menu combined
+router.get("/:id/menu", restaurantController.getRestaurantWithMenu);
+
+// ===== PROTECTED ROUTES =====
+// Create restaurant (with image)
+router.post("/", authMiddleware, restaurantUpload.single("image"), restaurantController.createRestaurant);
+
+// Update restaurant
+router.put("/:id", authMiddleware, restaurantUpload.single("image"), restaurantController.updateRestaurant);
+
+// Delete restaurant
+router.delete("/:id", authMiddleware, restaurantController.deleteRestaurant);
+
+// ===== ADMIN ROUTES =====
+// Approve restaurant
+router.put("/approve/:id", authMiddleware, restaurantController.approveRestaurant);
+
+// Reject restaurant
+router.put("/reject/:id", authMiddleware, restaurantController.rejectRestaurant);
+
+// LEGACY ROUTES (KEEP FOR BACKWARDS COMPATIBILITY)
+const db = require("../db");
+
+// Add restaurant (legacy - keeping for compatibility)
+router.post("/legacy", async (req, res) => {
   try {
     const { name, description, lat, lng, address, phone, email, image_url, rating, eta, cuisine } = req.body;
 

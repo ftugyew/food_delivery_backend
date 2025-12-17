@@ -25,6 +25,7 @@ const allowedOrigins = [
   "https://food-ameerpet.vercel.app" // if deployed frontend
 ];
 
+// ===== 1. CORS (FIRST) =====
 app.use(cors({
   origin: function (origin, callback) {
     if (!origin || allowedOrigins.includes(origin)) {
@@ -37,15 +38,19 @@ app.use(cors({
   credentials: true
 }));
 
-app.use(cors());
+// ===== 2. STATIC FILES (BEFORE parsing - public access, no auth) =====
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-
-// ===== JSON & URL ENCODING MIDDLEWARE (BEFORE ROUTES) =====
+// ===== 3. BODY PARSING (BEFORE logging/auth) =====
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
-// ===== Initialize socket.io BEFORE routes =====
+// ===== 4. PRODUCTION LOGGING (AFTER parsing, BEFORE auth) =====
+const logger = require("./middleware/logger");
+app.use(logger);
+
+// ===== 5. Initialize socket.io =====
 const io = new Server(server, {
   cors: {
     origin: "*",
@@ -53,35 +58,22 @@ const io = new Server(server, {
   }
 });
 
-// ===== AUTH ROUTES FIRST =====
+// ===== 6. AUTH MIDDLEWARE =====
 const { router: authRoutes, authMiddleware } = require("./routes/auth");
+
+// ===== 7. ROUTES =====
 app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminRoutes);
 
-// ===== ORDER ROUTES AFTER io =====
 const orderRoutesFactory = require("./routes/orders");
 const orderRoutes = orderRoutesFactory(io);
 app.use("/api/orders", orderRoutes);
 
-// ===== RESTAURANTS ROUTES =====
 const restaurantsRoutes = require("./routes/restaurants");
 app.use("/api/restaurants", restaurantsRoutes);
 
-// ===== MULTER SETUP (uploads) =====
-// Multer storage with per-field folders (menu images go to uploads/menu)
-const uploadsRoot = path.join(__dirname, "uploads");
-const menuUploads = path.join(uploadsRoot, "menu");
-fs.mkdirSync(menuUploads, { recursive: true });
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const dest = file.fieldname === "image" ? menuUploads : uploadsRoot;
-    fs.mkdirSync(dest, { recursive: true });
-    cb(null, dest);
-  },
-  filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
-});
-const upload = multer({ storage });
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+const menuRoutes = require("./routes/menu");
+app.use("/api/menu", menuRoutes);
 
 
 
@@ -135,12 +127,6 @@ if (typeof authMiddleware !== "function") {
 
 // ===== Static Files =====
 app.get("/favicon.ico", (req, res) => res.status(204).end());
-
-// ===== API LOGGING MIDDLEWARE =====
-app.use((req, res, next) => {
-  console.log("🔹 API Request:", req.method, req.originalUrl, req.body);
-  next();
-});
 
 // ===== Reviews Route (keeping for backward compatibility) =====
 app.use("/api/reviews", require("./routes/reviews"));
