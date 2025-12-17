@@ -39,7 +39,9 @@ app.use(cors({
 }));
 
 // ===== 2. STATIC FILES (BEFORE parsing - public access, no auth) =====
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+// Reuse the same uploads root as multer to avoid mismatched paths and to support persistent disks via UPLOADS_ROOT
+const { uploadsRoot } = require("./config/multer");
+app.use("/uploads", express.static(uploadsRoot));
 
 // ===== 3. BODY PARSING (BEFORE logging/auth) =====
 app.use(express.json());

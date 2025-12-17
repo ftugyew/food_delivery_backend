@@ -4,7 +4,10 @@ const path = require("path");
 const fs = require("fs");
 
 // ===== ENSURE UPLOAD DIRECTORIES EXIST =====
-const uploadsRoot = path.join(__dirname, "..", "uploads");
+// Allow overriding the uploads root with an env var (e.g., when mounting a persistent disk on Render)
+const uploadsRoot = process.env.UPLOADS_ROOT
+  ? path.resolve(process.env.UPLOADS_ROOT)
+  : path.join(__dirname, "..", "uploads");
 const menuDir = path.join(uploadsRoot, "menu");
 const restaurantsDir = path.join(uploadsRoot, "restaurants");
 
@@ -61,5 +64,8 @@ const restaurantUpload = multer({
 
 module.exports = {
   menuUpload,
-  restaurantUpload
+  restaurantUpload,
+  uploadsRoot,
+  menuDir,
+  restaurantsDir
 };
