@@ -1,7 +1,7 @@
-// routes/menu.js - Menu routes with proper Multer
+// routes/menu.js - Menu routes with Cloudinary
 const express = require("express");
 const router = express.Router();
-const { menuUpload } = require("../config/multer");
+const { menuUpload } = require("../middleware/upload");
 const menuController = require("../controllers/menu.controller");
 const { authMiddleware } = require("./auth");
 

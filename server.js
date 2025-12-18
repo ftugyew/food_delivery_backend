@@ -1,4 +1,4 @@
-// server.js — Tindo Backend (Railway MySQL, cleaned)
+// server.js — Tindo Backend with Cloudinary
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
@@ -6,95 +6,55 @@ const http = require("http");
 const { Server } = require("socket.io");
 const dotenv = require("dotenv");
 const path = require("path");
-const multer = require("multer");
-const fs = require("fs");
 const axios = require("axios");
 const bcrypt = require("bcryptjs");
 dotenv.config();
+
+// Initialize Cloudinary
+require("./config/cloudinary");
+
 const db = require("./db");
 const app = express();
 const server = http.createServer(app);
 const adminRoutes = require("./routes/admin");
 
-// Log the incoming Origin for visibility
+// Log incoming request origin
 app.use((req, _res, next) => {
   console.log('[CORS] Origin:', req.headers.origin || '(no origin)');
   next();
 });
 
-// Single, global CORS middleware (must come before any routes)
+// ===== 1. CORS MIDDLEWARE (SINGLE, BEFORE ALL ROUTES) =====
 const vercelPattern = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
 const localhostPattern = /^http:\/\/localhost:(3000|5500|5501)$/;
 
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true); // allow Postman/cURL (no Origin)
-    if (vercelPattern.test(origin) || localhostPattern.test(origin)) {
-      return callback(null, true);
-    }
-    console.warn('❌ CORS blocked:', origin);
-    return callback(new Error('Not allowed by CORS'));
-  },
-  credentials: true,
-  methods: ['GET','HEAD','PUT','PATCH','POST','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type','Authorization','X-Requested-With'],
-  maxAge: 86400
-}));
-
-
-
-
-const allowedOrigins = [
-  "http://localhost:3000",
-  "http://127.0.0.1:5500",
-  "http://127.0.0.1:5501",
-  "https://food-delivery-d9rhmxj1q-sravans-projects-f917a030.vercel.app",
-  "https://food-delivery-backend-cw3m.onrender.com"
-];
-
 app.use(
   cors({
-    origin: function (origin, callback) {
-      // Allow non-browser requests (Postman, mobile apps)
-      if (!origin) return callback(null, true);
-
-      // ✅ Allow all Vercel deployments
-      if (origin.endsWith(".vercel.app")) {
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true); // Allow Postman/cURL
+      if (vercelPattern.test(origin) || localhostPattern.test(origin)) {
         return callback(null, true);
       }
-
-      // ✅ Allow local development
-      if (
-        origin === "http://localhost:3000" ||
-        origin === "http://127.0.0.1:5500" ||
-        origin === "http://127.0.0.1:5501"
-      ) {
-        return callback(null, true);
-      }
-
-      console.error("❌ CORS blocked:", origin);
-      callback(new Error("Not allowed by CORS"));
+      console.warn("❌ CORS blocked:", origin);
+      return callback(new Error("Not allowed by CORS"));
     },
-    credentials: true
+    credentials: true,
+    methods: ['GET','HEAD','PUT','PATCH','POST','DELETE','OPTIONS'],
+    allowedHeaders: ['Content-Type','Authorization','X-Requested-With'],
+    maxAge: 86400
   })
 );
 
-
-// ===== 2. STATIC FILES (BEFORE parsing - public access, no auth) =====
-// Reuse the same uploads root as multer to avoid mismatched paths and to support persistent disks via UPLOADS_ROOT
-const { uploadsRoot } = require("./config/multer");
-app.use("/uploads", express.static(uploadsRoot));
-
-// ===== 3. BODY PARSING (BEFORE logging/auth) =====
+// ===== 2. BODY PARSING =====
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
-// ===== 4. PRODUCTION LOGGING (AFTER parsing, BEFORE auth) =====
+// ===== 3. PRODUCTION LOGGING =====
 const logger = require("./middleware/logger");
 app.use(logger);
 
-// ===== 5. Initialize socket.io =====
+// ===== 4. Initialize socket.io =====
 const io = new Server(server, {
   cors: {
     origin: "*",
@@ -102,19 +62,10 @@ const io = new Server(server, {
   }
 });
 
-// ===== Banner upload (multer) =====
-const bannersDir = path.join(__dirname, "uploads", "banners");
-try { fs.mkdirSync(bannersDir, { recursive: true }); } catch (_) {}
-const bannerStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, bannersDir),
-  filename: (_req, file, cb) => cb(null, `${Date.now()}-${Math.round(Math.random()*1e9)}${path.extname(file.originalname)}`)
-});
-const upload = multer({ storage: bannerStorage });
-
-// ===== 6. AUTH MIDDLEWARE =====
+// ===== 5. AUTH MIDDLEWARE =====
 const { router: authRoutes, authMiddleware } = require("./routes/auth");
 
-// ===== 7. ROUTES =====
+// ===== 6. ROUTES =====
 app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminRoutes);
 

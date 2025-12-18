@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { restaurantUpload } = require("../config/multer");
+const { restaurantUpload } = require("../middleware/upload");
 const restaurantController = require("../controllers/restaurant.controller");
 const { authMiddleware } = require("./auth");
 

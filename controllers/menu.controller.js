@@ -1,4 +1,4 @@
-// controllers/menu.controller.js - Safe menu CRUD operations
+// controllers/menu.controller.js - Menu CRUD (Cloudinary)
 const db = require("../db");
 
 // ===== GET ALL MENU ITEMS FOR A RESTAURANT (PUBLIC) =====
@@ -18,14 +18,10 @@ exports.getMenuByRestaurant = async (req, res) => {
       [restaurantId]
     );
 
-    // Build full image URLs
-    const host = `${req.protocol}://${req.get("host")}`;
+    // image_url already contains full Cloudinary URL
     const items = rows.map(item => ({
       ...item,
-      image_url: item.image_url || null, // Filename only
-      image_url_full: item.image_url 
-        ? `${host}/uploads/menu/${item.image_url}` 
-        : null
+      image_url: item.image_url || null
     }));
 
     console.log(`✅ Fetched ${items.length} menu items for restaurant ${restaurantId}`);
@@ -56,13 +52,9 @@ exports.getMyMenu = async (req, res) => {
       [user.restaurant_id]
     );
 
-    const host = `${req.protocol}://${req.get("host")}`;
     const items = rows.map(item => ({
       ...item,
-      image_url: item.image_url || null,
-      image_url_full: item.image_url 
-        ? `${host}/uploads/menu/${item.image_url}` 
-        : null
+      image_url: item.image_url || null // Full Cloudinary URL
     }));
 
     console.log(`✅ Fetched ${items.length} menu items for restaurant ${user.restaurant_id}`);
@@ -76,7 +68,7 @@ exports.getMyMenu = async (req, res) => {
   }
 };
 
-// ===== ADD MENU ITEM (WITH IMAGE) =====
+// ===== ADD MENU ITEM (WITH CLOUDINARY IMAGE) =====
 exports.addMenuItem = async (req, res) => {
   try {
     const user = req.user || {};
@@ -90,8 +82,8 @@ exports.addMenuItem = async (req, res) => {
 
     const { item_name, price, description, category, is_veg } = req.body;
     
-    // ✅ SAFE: Use optional chaining
-    const imageFilename = req.file?.filename || null;
+    // req.file.path contains full Cloudinary URL
+    const imageUrl = req.file?.path || null;
 
     if (!item_name || price === undefined || price === null) {
       return res.status(400).json({ 
@@ -113,17 +105,17 @@ exports.addMenuItem = async (req, res) => {
         Number(price) || 0,
         category || "Uncategorized",
         finalIsVeg,
-        imageFilename // ✅ Just the filename, not full path
+        imageUrl // Full Cloudinary URL
       ]
     );
 
-    console.log(`✅ Menu item added: ID ${result.insertId}, Image: ${imageFilename || 'none'}`);
+    console.log(`✅ Menu item added: ID ${result.insertId}, Image: ${imageUrl || 'none'}`);
     
     return res.json({ 
       success: true, 
       message: "Menu item added successfully",
       id: result.insertId,
-      image_url: imageFilename
+      image_url: imageUrl
     });
   } catch (err) {
     console.error("❌ Error adding menu item:", err.message);
@@ -156,28 +148,34 @@ exports.deleteMenuItem = async (req, res) => {
 
     const item = rows[0];
 
+// ===== DELETE MENU ITEM =====
+exports.deleteMenuItem = async (req, res) => {
+  try {
+    const user = req.user || {};
+    const itemId = req.params.id;
+
+    const [rows] = await db.execute(
+      "SELECT restaurant_id FROM menu WHERE id = ?",
+      [itemId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ 
+        success: false, 
+        error: "Menu item not found" 
+      });
+    }
+
     // Admin can delete anything, restaurant owner can only delete their own
-    if (user.role !== "admin" && user.restaurant_id !== item.restaurant_id) {
+    if (user.role !== "admin" && user.restaurant_id !== rows[0].restaurant_id) {
       return res.status(403).json({ 
         success: false, 
         error: "Not authorized to delete this item" 
       });
     }
 
-    // Delete from database
+    // Delete from database (Cloudinary auto-manages image cleanup)
     await db.execute("DELETE FROM menu WHERE id = ?", [itemId]);
-
-    // Optional: Delete image file from disk
-    if (item.image_url) {
-      const fs = require("fs");
-      const path = require("path");
-      const imagePath = path.join(__dirname, "..", "uploads", "menu", item.image_url);
-      
-      fs.unlink(imagePath, (err) => {
-        if (err) console.warn(`⚠️ Could not delete image file: ${item.image_url}`);
-        else console.log(`✅ Deleted image file: ${item.image_url}`);
-      });
-    }
 
     console.log(`✅ Menu item ${itemId} deleted`);
     return res.json({ 
@@ -200,7 +198,6 @@ exports.updateMenuItem = async (req, res) => {
     const itemId = req.params.id;
     const { item_name, price, description, category, is_veg } = req.body;
 
-    // Check ownership
     const [rows] = await db.execute(
       "SELECT restaurant_id FROM menu WHERE id = ?",
       [itemId]
@@ -220,10 +217,9 @@ exports.updateMenuItem = async (req, res) => {
       });
     }
 
-    const imageFilename = req.file?.filename || undefined;
+    const imageUrl = req.file?.path || undefined; // Full Cloudinary URL
     const finalIsVeg = (is_veg === '1' || is_veg === 1 || is_veg === true) ? 1 : 0;
 
-    // Build dynamic update query
     const updates = [];
     const params = [];
 
@@ -247,9 +243,9 @@ exports.updateMenuItem = async (req, res) => {
       updates.push("is_veg = ?");
       params.push(finalIsVeg);
     }
-    if (imageFilename) {
+    if (imageUrl) {
       updates.push("image_url = ?");
-      params.push(imageFilename);
+      params.push(imageUrl);
     }
 
     if (updates.length === 0) {
@@ -269,7 +265,8 @@ exports.updateMenuItem = async (req, res) => {
     console.log(`✅ Menu item ${itemId} updated`);
     return res.json({ 
       success: true, 
-      message: "Menu item updated" 
+      message: "Menu item updated",
+      image_url: imageUrl || undefined
     });
   } catch (err) {
     console.error("❌ Error updating menu item:", err.message);
