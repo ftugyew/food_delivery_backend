@@ -3,47 +3,10 @@ const router = express.Router();
 const db = require("../db"); // your DB connection
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
-const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
+const { restaurantUpload } = require("../middleware/upload");
 
 // JWT secret (store in .env in production)
 const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
-
-// ===== MULTER CONFIG FOR RESTAURANT PHOTO UPLOADS =====
-const uploadsDir = path.join(__dirname, "../uploads/restaurants");
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadsDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueName =
-      Date.now() +
-      "-" +
-      Math.round(Math.random() * 1e9) +
-      path.extname(file.originalname);
-    cb(null, uniqueName);
-  }
-});
-
-const upload = multer({
-  storage,
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif|webp/;
-    const extname = allowedTypes.test(
-      path.extname(file.originalname).toLowerCase()
-    );
-    const mimetype = allowedTypes.test(file.mimetype);
-
-    if (mimetype && extname) return cb(null, true);
-    cb(new Error("Only image files are allowed (jpeg, jpg, png, gif, webp)"));
-  }
-});
 
 // ===== Generate Token =====
 function generateToken(user) {
@@ -68,7 +31,7 @@ function normalizeRole(role) {
 // ========== REGISTER ====================================================
 // =======================================================================
 
-router.post("/register", upload.single("restaurantImage"), async (req, res) => {
+router.post("/register", restaurantUpload.single("restaurantImage"), async (req, res) => {
   try {
     console.log("📝 Registration request received");
     console.log("Body:", req.body);
@@ -113,12 +76,12 @@ router.post("/register", upload.single("restaurantImage"), async (req, res) => {
           .json({ error: "Restaurant name and cuisine required" });
       }
 
-      const imageFilename = req.file ? req.file.filename : null;
-      console.log("🖼️ Restaurant image:", imageFilename);
+      const imageUrl = req.file ? req.file.path : null;
+      console.log("🖼️ Restaurant image:", imageUrl);
 
       const [restaurantResult] = await db.query(
         "INSERT INTO restaurants (name, cuisine, description, eta, status, image_url) VALUES (?, ?, ?, ?, 'pending', ?)",
-        [restaurant_name, cuisine, description || "", eta || 30, imageFilename]
+        [restaurant_name, cuisine, description || "", eta || 30, imageUrl]
       );
 
       restaurantId = restaurantResult.insertId;
@@ -150,7 +113,7 @@ router.post("/register", upload.single("restaurantImage"), async (req, res) => {
           : "Registration successful!",
       user_id: userResult.insertId,
       restaurant_id: restaurantId,
-      image_url: req.file ? req.file.filename : null
+      image_url: req.file ? req.file.path : null
     });
   } catch (err) {
     console.error("❌ Registration Error:", err);
