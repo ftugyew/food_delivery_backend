@@ -56,7 +56,7 @@ module.exports = (io) => {
   
   // Place Order (Auto-Assign Delivery)
   router.post("/", async (req, res) => {
-    const { user_id, restaurant_id, items, total, rest_lat, rest_lng } = req.body;
+    const { user_id, restaurant_id, items, total, rest_lat, rest_lng, payment_type, estimated_delivery, delivery_address, delivery_lat, delivery_lng } = req.body;
 
     // Validate request payload
     if (!user_id || !restaurant_id || !items || !total) {
@@ -97,10 +97,21 @@ module.exports = (io) => {
       const statusVar = agent_id ? 'Confirmed' : 'Pending';
       const [result] = await db.execute(
         "INSERT INTO orders (user_id, restaurant_id, items, total, agent_id, status, order_id, payment_type, estimated_delivery, delivery_address, delivery_lat, delivery_lng) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [user_id, restaurant_id, JSON.stringify(items), total, agent_id, statusVar, null, null, null, null, null, null]
+        [user_id, restaurant_id, JSON.stringify(items), total, agent_id, statusVar, null, payment_type || null, estimated_delivery || null, delivery_address || null, delivery_lat || null, delivery_lng || null]
       );
 
-      const newOrder = { id: result.insertId, user_id, restaurant_id, items, total, agent_id, status: statusVar };
+      const newOrder = { 
+        id: result.insertId, 
+        user_id, 
+        restaurant_id, 
+        items, 
+        total, 
+        agent_id, 
+        status: statusVar,
+        payment_type: payment_type || null,
+        estimated_delivery: estimated_delivery || null,
+        delivery_address: delivery_address || null
+      };
       io.emit("newOrder", newOrder);
       if (agent_id) io.emit(`orderForAgent_${agent_id}`, newOrder);
       res.json({ message: "✅ Order placed", order: newOrder });
