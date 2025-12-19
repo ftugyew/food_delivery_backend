@@ -211,7 +211,7 @@ router.post("/login", async (req, res) => {
       return res.json({
         success: true,
         role: "delivery",
-        redirectTo: "/delivery-dashboard.html",
+        redirectTo: "/delivery-dashboard-live.html",
         token,
         user
       });
