@@ -18,32 +18,41 @@ const app = express();
 const server = http.createServer(app);
 const adminRoutes = require("./routes/admin");
 
-// Log incoming request origin
-app.use((req, _res, next) => {
-  console.log('[CORS] Origin:', req.headers.origin || '(no origin)');
-  next();
-});
-
-// ===== 1. CORS MIDDLEWARE (SINGLE, BEFORE ALL ROUTES) =====
-const vercelPattern = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
-const localhostPattern = /^http:\/\/localhost:(3000|5500|5501)$/;
+// ===== CORS (FINAL, SAFE) =====
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:5500",
+  "http://localhost:5501"
+];
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin) return callback(null, true); // Allow Postman/cURL
-      if (vercelPattern.test(origin) || localhostPattern.test(origin)) {
+      // Allow Postman / server-to-server
+      if (!origin) return callback(null, true);
+
+      // Allow localhost
+      if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
+
+      // ✅ Allow ALL Vercel deployments (preview + prod)
+      if (origin.endsWith(".vercel.app")) {
+        return callback(null, true);
+      }
+
       console.warn("❌ CORS blocked:", origin);
       return callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
-    methods: ['GET','HEAD','PUT','PATCH','POST','DELETE','OPTIONS'],
-    allowedHeaders: ['Content-Type','Authorization','X-Requested-With'],
-    maxAge: 86400
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
+
+// ✅ VERY IMPORTANT: allow preflight
+app.options("*", cors());
+
 
 // ===== 2. BODY PARSING =====
 app.use(express.json());
