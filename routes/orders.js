@@ -94,14 +94,38 @@ module.exports = (io) => {
         } catch (_) {}
       }
 
+      // Generate unique 12-digit order ID
+      let uniqueOrderId = null;
+      let attempts = 0;
+      const maxAttempts = 10;
+      
+      while (!uniqueOrderId && attempts < maxAttempts) {
+        // Generate random 12-digit number (100000000000 to 999999999999)
+        const randomOrderId = Math.floor(100000000000 + Math.random() * 900000000000).toString();
+        
+        // Check if this order_id already exists
+        const [existing] = await db.execute("SELECT id FROM orders WHERE order_id = ? LIMIT 1", [randomOrderId]);
+        
+        if (!existing || existing.length === 0) {
+          uniqueOrderId = randomOrderId;
+        }
+        attempts++;
+      }
+      
+      // Fallback to timestamp-based ID if random generation fails
+      if (!uniqueOrderId) {
+        uniqueOrderId = Date.now().toString().padStart(12, '0').slice(-12);
+      }
+
       const statusVar = agent_id ? 'Confirmed' : 'Pending';
       const [result] = await db.execute(
         "INSERT INTO orders (user_id, restaurant_id, items, total, agent_id, status, order_id, payment_type, estimated_delivery, delivery_address, delivery_lat, delivery_lng) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [user_id, restaurant_id, JSON.stringify(items), total, agent_id, statusVar, null, payment_type || null, estimated_delivery || null, delivery_address || null, delivery_lat || null, delivery_lng || null]
+        [user_id, restaurant_id, JSON.stringify(items), total, agent_id, statusVar, uniqueOrderId, payment_type || null, estimated_delivery || null, delivery_address || null, delivery_lat || null, delivery_lng || null]
       );
 
       const newOrder = { 
-        id: result.insertId, 
+        id: result.insertId,
+        order_id: uniqueOrderId,
         user_id, 
         restaurant_id, 
         items, 

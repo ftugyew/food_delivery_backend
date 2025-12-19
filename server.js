@@ -115,7 +115,13 @@ async function getMapplsToken() {
 
 // Optional routes (if files missing → ignore)
 try { app.use("/api/payments", require("./routes/payments")); } catch (_) {}
-try { app.use("/api/tracking", require("./routes/tracking")); } catch (_) {}
+try { 
+  const trackingRoutes = require("./routes/tracking")(db, io);
+  app.use("/api/tracking", trackingRoutes); 
+  console.log("✅ Live tracking routes loaded");
+} catch (err) {
+  console.warn("⚠️  Tracking routes not loaded:", err.message);
+}
 try { app.use("/api/user-addresses", require("./routes/user-addresses")); } catch (_) {}
 try { app.use("/api/delivery", require("./routes/delivery")); } catch (_) {}
 if (typeof authMiddleware !== "function") {
@@ -681,23 +687,33 @@ if (authMiddleware) {
 }
 
 // ========= SOCKET.IO EVENT HANDLERS =========
-const deliveryAgents = {};
-io.on("connection", (socket) => {
-  console.log("🟢 Socket connected:", socket.id);
-  socket.on("agentLocation", (data) => {
-    try {
-      const { agentId, lat, lng } = data || {};
-      if (!agentId || typeof lat !== "number" || typeof lng !== "number") return;
-      deliveryAgents[agentId] = { lat, lng };
-      io.emit("locationUpdate", { agentId, lat, lng });
-    } catch (e) {
-      console.error("agentLocation handler error:", e.message);
-    }
+// Load live tracking socket handler
+try {
+  const setupLiveTracking = require("./socket-tracking");
+  setupLiveTracking(io, db);
+  console.log("✅ Live tracking socket handler loaded");
+} catch (err) {
+  console.warn("⚠️  Live tracking socket not loaded:", err.message);
+  
+  // Fallback basic socket handler
+  const deliveryAgents = {};
+  io.on("connection", (socket) => {
+    console.log("🟢 Socket connected:", socket.id);
+    socket.on("agentLocation", (data) => {
+      try {
+        const { agentId, lat, lng } = data || {};
+        if (!agentId || typeof lat !== "number" || typeof lng !== "number") return;
+        deliveryAgents[agentId] = { lat, lng };
+        io.emit("locationUpdate", { agentId, lat, lng });
+      } catch (e) {
+        console.error("agentLocation handler error:", e.message);
+      }
+    });
+    socket.on("disconnect", () => {
+      console.log("🔴 Socket disconnected:", socket.id);
+    });
   });
-  socket.on("disconnect", () => {
-    console.log("🔴 Socket disconnected:", socket.id);
-  });
-});
+}
 
 // ===== Server Startup =====
 const PORT = process.env.PORT || 5000;
