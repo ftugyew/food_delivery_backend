@@ -105,12 +105,28 @@ router.post("/register", restaurantUpload.single("restaurantImage"), async (req,
 
     console.log("✅ User created with ID:", userResult.insertId);
 
+    // If delivery agent, also create agent record linked to user
+    if (role === "delivery_agent") {
+      try {
+        const [agentResult] = await db.query(
+          "INSERT INTO agents (user_id, name, phone, status, vehicle_type, aadhar) VALUES (?, ?, ?, 'Inactive', ?, ?)",
+          [userResult.insertId, name, phone, vehicle_type, aadhar]
+        );
+        console.log("✅ Delivery agent created with ID:", agentResult.insertId);
+      } catch (e) {
+        console.error("❌ Failed to create delivery agent record:", e.message);
+        return res.status(500).json({ error: "Registration failed: could not create delivery agent" });
+      }
+    }
+
     return res.json({
       success: true,
       message:
         role === "restaurant"
           ? "Restaurant registered! Awaiting admin approval"
-          : "Registration successful!",
+          : role === "delivery_agent"
+            ? "Delivery agent registered! Awaiting activation"
+            : "Registration successful!",
       user_id: userResult.insertId,
       restaurant_id: restaurantId,
       image_url: req.file ? req.file.path : null
@@ -205,16 +221,43 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    // DELIVERY AGENT
+    // DELIVERY AGENT — require ACTIVE status before granting access
     if (normalizedRole === "delivery") {
-      const token = generateToken(user);
-      return res.json({
-        success: true,
-        role: "delivery",
-        redirectTo: "/delivery-dashboard-live.html",
-        token,
-        user
-      });
+      try {
+        const [agentRows] = await db.query(
+          "SELECT status FROM agents WHERE user_id = ?",
+          [user.id]
+        );
+
+        if (!agentRows.length) {
+          return res.json({
+            success: false,
+            status: "pending",
+            message: "Delivery agent profile not found. Awaiting verification."
+          });
+        }
+
+        const agentStatus = agentRows[0].status;
+        if (agentStatus !== "Active") {
+          return res.json({
+            success: false,
+            status: agentStatus?.toLowerCase?.() || "inactive",
+            message: "Your delivery agent account is not active yet. Please wait for admin approval."
+          });
+        }
+
+        const token = generateToken(user);
+        return res.json({
+          success: true,
+          role: "delivery",
+          redirectTo: "/delivery-dashboard-live.html",
+          token,
+          user
+        });
+      } catch (e) {
+        console.error("Agent status check failed:", e.message);
+        return res.status(500).json({ error: "Login failed: could not verify agent status" });
+      }
     }
 
     // CUSTOMER

@@ -115,6 +115,38 @@ router.get("/agents", async (req, res) => {
   }
 });
 
+// Pending agents awaiting activation
+router.get("/agents/pending", async (req, res) => {
+  try {
+    const [rows] = await db.execute("SELECT * FROM agents WHERE status != 'Active'");
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: "Failed to fetch pending agents" });
+  }
+});
+
+// Approve/activate delivery agent
+router.put("/agents/approve/:id", async (req, res) => {
+  const agentId = req.params.id;
+  try {
+    await db.execute("UPDATE agents SET status = 'Active' WHERE id = ?", [agentId]);
+    res.json({ success: true, message: "Delivery agent activated" });
+  } catch (err) {
+    res.status(500).json({ success: false, error: "Failed to activate agent" });
+  }
+});
+
+// Deactivate delivery agent
+router.put("/agents/deactivate/:id", async (req, res) => {
+  const agentId = req.params.id;
+  try {
+    await db.execute("UPDATE agents SET status = 'Inactive' WHERE id = ?", [agentId]);
+    res.json({ success: true, message: "Delivery agent deactivated" });
+  } catch (err) {
+    res.status(500).json({ success: false, error: "Failed to deactivate agent" });
+  }
+});
+
 // ================= TOP RESTAURANTS =================
 router.get("/top-restaurants", async (req, res) => {
   try {
