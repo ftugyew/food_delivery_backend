@@ -31,9 +31,15 @@ CREATE TABLE IF NOT EXISTS restaurants (
     eta INT DEFAULT 30,
     cuisine VARCHAR(100),
     status ENUM('pending', 'approved', 'rejected', 'active', 'inactive') DEFAULT 'pending',
+    featured BOOLEAN DEFAULT FALSE,
+    is_top BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
+
+-- Add missing columns if they don't exist (for existing databases)
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS featured BOOLEAN DEFAULT FALSE;
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS is_top BOOLEAN DEFAULT FALSE;
 
 -- Menu items table
 CREATE TABLE IF NOT EXISTS menu (

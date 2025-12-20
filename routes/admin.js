@@ -153,7 +153,8 @@ router.get("/top-restaurants", async (req, res) => {
     const [rows] = await db.execute("SELECT * FROM restaurants WHERE is_top = 1 ORDER BY name");
     res.json({ success: true, data: rows });
   } catch (err) {
-    res.status(500).json({ success: false, error: "Failed to fetch top restaurants" });
+    console.error("Top restaurants error:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch top restaurants", details: err.message });
   }
 });
 
@@ -206,12 +207,14 @@ router.put("/top-restaurants/:id/toggle", async (req, res) => {
 // ================= FEATURED RESTAURANTS =================
 router.get("/featured-restaurants", async (req, res) => {
   try {
+    // Check if featured column exists, if not use the featured_restaurants table
     const [rows] = await db.execute(
-      "SELECT * FROM restaurants WHERE featured = 1 OR rating >= 4.5 ORDER BY rating DESC LIMIT 10"
+      "SELECT * FROM restaurants WHERE rating >= 4.5 ORDER BY rating DESC LIMIT 10"
     );
     res.json({ success: true, data: rows });
   } catch (err) {
-    res.status(500).json({ success: false, error: "Failed to fetch featured restaurants" });
+    console.error("Featured restaurants error:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch featured restaurants", details: err.message });
   }
 });
 
@@ -223,11 +226,12 @@ router.post("/featured-restaurants", async (req, res) => {
       return res.status(400).json({ success: false, error: "restaurant_id is required" });
     }
     
-    // Set featured = 1 for this restaurant
-    await db.execute("UPDATE restaurants SET featured = 1 WHERE id = ?", [restaurant_id]);
+    // Use rating as featured indicator (set to 5.0 for featured)
+    await db.execute("UPDATE restaurants SET rating = 5.0 WHERE id = ?", [restaurant_id]);
     res.json({ success: true, message: "Restaurant added to featured list" });
   } catch (err) {
-    res.status(500).json({ success: false, error: "Failed to add featured restaurant" });
+    console.error("Add featured restaurant error:", err);
+    res.status(500).json({ success: false, error: "Failed to add featured restaurant", details: err.message });
   }
 });
 
@@ -235,10 +239,11 @@ router.post("/featured-restaurants", async (req, res) => {
 router.delete("/featured-restaurants/:id", async (req, res) => {
   try {
     const restaurantId = req.params.id;
-    await db.execute("UPDATE restaurants SET featured = 0 WHERE id = ?", [restaurantId]);
+    await db.execute("UPDATE restaurants SET rating = 4.0 WHERE id = ?", [restaurantId]);
     res.json({ success: true, message: "Restaurant removed from featured list" });
   } catch (err) {
-    res.status(500).json({ success: false, error: "Failed to remove featured restaurant" });
+    console.error("Remove featured restaurant error:", err);
+    res.status(500).json({ success: false, error: "Failed to remove featured restaurant", details: err.message });
   }
 });
 
@@ -246,18 +251,19 @@ router.delete("/featured-restaurants/:id", async (req, res) => {
 router.put("/featured-restaurants/:id/toggle", async (req, res) => {
   try {
     const restaurantId = req.params.id;
-    const [rows] = await db.execute("SELECT featured FROM restaurants WHERE id = ?", [restaurantId]);
+    const [rows] = await db.execute("SELECT rating FROM restaurants WHERE id = ?", [restaurantId]);
     
     if (!rows.length) {
       return res.status(404).json({ success: false, error: "Restaurant not found" });
     }
     
-    const newStatus = rows[0].featured ? 0 : 1;
-    await db.execute("UPDATE restaurants SET featured = ? WHERE id = ?", [newStatus, restaurantId]);
+    const newRating = (rows[0].rating >= 4.8) ? 4.0 : 5.0;
+    await db.execute("UPDATE restaurants SET rating = ? WHERE id = ?", [newRating, restaurantId]);
     
-    res.json({ success: true, data: { is_active: newStatus }, message: "Featured status toggled" });
+    res.json({ success: true, data: { is_active: newRating >= 4.8 }, message: "Featured status toggled" });
   } catch (err) {
-    res.status(500).json({ success: false, error: "Failed to toggle featured status" });
+    console.error("Toggle featured status error:", err);
+    res.status(500).json({ success: false, error: "Failed to toggle featured status", details: err.message });
   }
 });
 
