@@ -50,10 +50,6 @@ app.use(
   })
 );
 
-// ✅ VERY IMPORTANT: allow preflight
-app.options("*", cors());
-
-
 // ===== 2. BODY PARSING =====
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
