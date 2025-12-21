@@ -14,6 +14,7 @@ dotenv.config();
 require("./config/cloudinary");
 
 const db = require("./db");
+const { bannerUpload } = require("./middleware/upload");
 const app = express();
 const server = http.createServer(app);
 const adminRoutes = require("./routes/admin");
@@ -52,6 +53,7 @@ app.use(
 
 // ===== 2. BODY PARSING =====
 app.use(express.json());
+
 app.use(express.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
@@ -234,12 +236,23 @@ app.get("/api/banners", async (req, res) => {
   }
 });
 
-app.post("/api/admin/banners", upload.single("banner"), async (req, res) => {
+app.post("/api/admin/banners", bannerUpload.single("banner"), async (req, res) => {
   try {
     const file = req.file;
     if (!file) return res.status(400).json({ error: "No file uploaded" });
-    const [result] = await db.execute("INSERT INTO banners (image_url, is_active, created_at) VALUES (?, 1, NOW())", [file.filename]);
-    return res.json({ id: result.insertId, image_url: file.filename });
+    
+    // req.file.path contains full Cloudinary URL
+    const imageUrl = file.path;
+    
+    const [result] = await db.execute(
+      "INSERT INTO banners (image_url, is_active, created_at) VALUES (?, 1, NOW())", 
+      [imageUrl]
+    );
+    
+    return res.json({ 
+      id: result.insertId, 
+      image_url: imageUrl 
+    });
   } catch (err) {
     console.error("Error uploading banner:", err?.message);
     return res.status(500).json({ error: "Failed to upload banner" });
