@@ -133,27 +133,6 @@ exports.deleteMenuItem = async (req, res) => {
     const user = req.user || {};
     const itemId = req.params.id;
 
-    // Check ownership
-    const [rows] = await db.execute(
-      "SELECT restaurant_id, image_url FROM menu WHERE id = ?",
-      [itemId]
-    );
-
-    if (!rows.length) {
-      return res.status(404).json({ 
-        success: false, 
-        error: "Menu item not found" 
-      });
-    }
-
-    const item = rows[0];
-
-// ===== DELETE MENU ITEM =====
-exports.deleteMenuItem = async (req, res) => {
-  try {
-    const user = req.user || {};
-    const itemId = req.params.id;
-
     const [rows] = await db.execute(
       "SELECT restaurant_id FROM menu WHERE id = ?",
       [itemId]
