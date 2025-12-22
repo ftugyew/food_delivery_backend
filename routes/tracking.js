@@ -204,6 +204,109 @@ module.exports = (db, io) => {
   });
 
   // ============================================
+  // SAVE AGENT LOCATION (GPS TRACKING)
+  // ============================================
+  router.post("/agent-location", async (req, res) => {
+    const { agent_id, order_id, latitude, longitude, accuracy, speed, heading } = req.body;
+
+    if (!agent_id || latitude === undefined || longitude === undefined) {
+      return res.status(400).json({ error: "Missing required fields: agent_id, latitude, longitude" });
+    }
+
+    try {
+      // Verify agent exists and owns the order if order_id provided
+      const [agents] = await db.execute(
+        "SELECT id, name FROM agents WHERE id = ?",
+        [agent_id]
+      );
+
+      if (!agents || agents.length === 0) {
+        return res.status(404).json({ error: "Agent not found" });
+      }
+
+      // If order_id provided, verify agent is assigned to it
+      if (order_id) {
+        const [orders] = await db.execute(
+          "SELECT id, agent_id FROM orders WHERE id = ? AND agent_id = ?",
+          [order_id, agent_id]
+        );
+
+        if (!orders || orders.length === 0) {
+          return res.status(403).json({ error: "Agent not assigned to this order" });
+        }
+      }
+
+      // Store agent location
+      const [result] = await db.execute(
+        `INSERT INTO agent_locations (agent_id, order_id, latitude, longitude, accuracy, speed, heading, timestamp)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [agent_id, order_id || null, latitude, longitude, accuracy || null, speed || null, heading || null]
+      );
+
+      // Broadcast location update via Socket.IO to tracking users
+      if (order_id) {
+        io.emit(`order_${order_id}_agent_location`, {
+          agent_id,
+          order_id,
+          latitude,
+          longitude,
+          accuracy,
+          speed,
+          heading,
+          timestamp: new Date().toISOString()
+        });
+
+        // Also broadcast to agent's own socket
+        io.emit(`agent_${agent_id}_location_update`, {
+          latitude,
+          longitude,
+          accuracy,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      res.json({
+        success: true,
+        location_id: result.insertId,
+        message: "Location saved successfully"
+      });
+    } catch (err) {
+      console.error("Save agent location error:", err);
+      res.status(500).json({ error: "Failed to save location", details: err.message });
+    }
+  });
+
+  // ============================================
+  // GET AGENT CURRENT LOCATION
+  // ============================================
+  router.get("/agent/:agent_id/location", async (req, res) => {
+    const { agent_id } = req.params;
+
+    try {
+      const [locations] = await db.execute(
+        `SELECT latitude, longitude, accuracy, speed, heading, timestamp 
+         FROM agent_locations 
+         WHERE agent_id = ?
+         ORDER BY timestamp DESC LIMIT 1`,
+        [agent_id]
+      );
+
+      if (!locations || locations.length === 0) {
+        return res.json({ 
+          success: true, 
+          location: null,
+          message: "No location data available" 
+        });
+      }
+
+      res.json({ success: true, location: locations[0] });
+    } catch (err) {
+      console.error("Get agent location error:", err);
+      res.status(500).json({ error: "Failed to get location" });
+    }
+  });
+
+  // ============================================
   // SAVE CHAT MESSAGE
   // ============================================
   router.post("/orders/:orderId/chat", async (req, res) => {

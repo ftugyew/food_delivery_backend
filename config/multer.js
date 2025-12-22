@@ -10,9 +10,11 @@ const uploadsRoot = process.env.UPLOADS_ROOT
   : path.join(__dirname, "..", "uploads");
 const menuDir = path.join(uploadsRoot, "menu");
 const restaurantsDir = path.join(uploadsRoot, "restaurants");
+const bannersDir = path.join(uploadsRoot, "banners");
 
 fs.mkdirSync(menuDir, { recursive: true });
 fs.mkdirSync(restaurantsDir, { recursive: true });
+fs.mkdirSync(bannersDir, { recursive: true });
 
 // ===== MENU IMAGE STORAGE =====
 const menuStorage = multer.diskStorage({
@@ -29,6 +31,17 @@ const menuStorage = multer.diskStorage({
 const restaurantStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, restaurantsDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1E9)}${path.extname(file.originalname)}`;
+    cb(null, uniqueName);
+  }
+});
+
+// ===== BANNER IMAGE STORAGE =====
+const bannerStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, bannersDir);
   },
   filename: (req, file, cb) => {
     const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1E9)}${path.extname(file.originalname)}`;
@@ -62,10 +75,18 @@ const restaurantUpload = multer({
   limits: { fileSize: 5 * 1024 * 1024 } // 5MB max
 });
 
+const bannerUpload = multer({
+  storage: bannerStorage,
+  fileFilter: imageFilter,
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB max for banners
+});
+
 module.exports = {
   menuUpload,
   restaurantUpload,
+  bannerUpload,
   uploadsRoot,
   menuDir,
-  restaurantsDir
+  restaurantsDir,
+  bannersDir
 };

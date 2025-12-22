@@ -2,14 +2,8 @@ const express = require("express");
 const db = require("../db");
 const multer = require("multer");
 const path = require("path");
+const { bannerUpload } = require("../config/multer");
 const router = express.Router();
-
-// Multer setup for banner uploads
-const storage = multer.diskStorage({
-  destination: "uploads/",
-  filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
-});
-const upload = multer({ storage });
 
 // ================= USERS =================
 router.get("/users", async (req, res) => {
@@ -289,7 +283,7 @@ router.get("/banners", async (req, res) => {
 });
 
 // Upload new banner (POST with file upload)
-router.post("/banners", upload.single("banner"), async (req, res) => {
+router.post("/banners", bannerUpload.single("banner"), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, error: "No file uploaded" });
@@ -306,7 +300,8 @@ router.post("/banners", upload.single("banner"), async (req, res) => {
       )
     `);
     
-    const imageUrl = req.file.filename;
+    // Store filename with banners folder prefix so it can be fetched from /uploads/banners/
+    const imageUrl = `banners/${req.file.filename}`;
     await db.execute("INSERT INTO banners (image_url, is_active) VALUES (?, 1)", [imageUrl]);
     
     res.json({ success: true, message: "Banner uploaded successfully", image_url: imageUrl });

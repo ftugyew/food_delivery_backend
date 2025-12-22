@@ -74,17 +74,20 @@ const { router: authRoutes, authMiddleware } = require("./routes/auth");
 
 // ===== 6. ROUTES =====
 app.use("/api/auth", authRoutes);
-app.use("/api/admin", adminRoutes);
+
+// Protected routes - apply authMiddleware
+app.use("/api/admin", authMiddleware, adminRoutes);
 
 const orderRoutesFactory = require("./routes/orders");
 const orderRoutes = orderRoutesFactory(io);
-app.use("/api/orders", orderRoutes);
+app.use("/api/orders", authMiddleware, orderRoutes);
 
 const restaurantsRoutes = require("./routes/restaurants");
-app.use("/api/restaurants", restaurantsRoutes);
+app.use("/api/restaurants", authMiddleware, restaurantsRoutes);
 
 const menuRoutes = require("./routes/menu");
-app.use("/api/menu", menuRoutes);
+app.use("/api/menu", authMiddleware, menuRoutes);
+
 
 
 
@@ -121,16 +124,16 @@ async function getMapplsToken() {
 
 
 // Optional routes (if files missing → ignore)
-try { app.use("/api/payments", require("./routes/payments")); } catch (_) {}
+try { app.use("/api/payments", authMiddleware, require("./routes/payments")); } catch (_) {}
 try { 
   const trackingRoutes = require("./routes/tracking")(db, io);
-  app.use("/api/tracking", trackingRoutes); 
+  app.use("/api/tracking", authMiddleware, trackingRoutes); 
   console.log("✅ Live tracking routes loaded");
 } catch (err) {
   console.warn("⚠️  Tracking routes not loaded:", err.message);
 }
-try { app.use("/api/user-addresses", require("./routes/user-addresses")); } catch (_) {}
-try { app.use("/api/delivery", require("./routes/delivery")); } catch (_) {}
+try { app.use("/api/user-addresses", authMiddleware, require("./routes/user-addresses")); } catch (_) {}
+try { app.use("/api/delivery", authMiddleware, require("./routes/delivery")); } catch (_) {}
 if (typeof authMiddleware !== "function") {
   authMiddleware = (req, _res, next) => next();
 }
@@ -144,6 +147,10 @@ if (typeof authMiddleware !== "function") {
 
 // ===== Static Files =====
 app.get("/favicon.ico", (req, res) => res.status(204).end());
+
+// Serve uploaded files (restaurants, menu, banners)
+const uploadsPath = path.join(__dirname, "uploads");
+app.use("/uploads", express.static(uploadsPath));
 
 // ===== Reviews Route (keeping for backward compatibility) =====
 app.use("/api/reviews", require("./routes/reviews"));

@@ -297,4 +297,48 @@ function authMiddleware(req, res, next) {
   }
 }
 
+// =======================================================================
+// ========== UPDATE USER LOCATION (AFTER LOGIN) =========================
+// =======================================================================
+
+router.post("/update-location", authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { latitude, longitude, accuracy } = req.body;
+
+    if (!latitude || !longitude) {
+      return res.status(400).json({ error: "Latitude and longitude required" });
+    }
+
+    console.log(`📍 User ${userId} location updated:`, { latitude, longitude });
+
+    // Store location temporarily (will be saved to orders table when order is placed)
+    // For now, just confirm receipt
+    res.json({
+      success: true,
+      message: "Location captured successfully",
+      data: { latitude, longitude, accuracy }
+    });
+  } catch (error) {
+    console.error("❌ Update location error:", error);
+    res.status(500).json({ error: "Failed to update location" });
+  }
+});
+
+// =======================================================================
+// ========== TOKEN VERIFICATION ENDPOINT ================================
+// =======================================================================
+
+router.get("/verify", authMiddleware, async (req, res) => {
+  try {
+    // Token is already verified by middleware
+    res.json({
+      valid: true,
+      user: req.user
+    });
+  } catch (error) {
+    res.status(403).json({ valid: false, error: "Invalid token" });
+  }
+});
+
 module.exports = { router, authMiddleware };

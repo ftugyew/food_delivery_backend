@@ -307,24 +307,171 @@ module.exports = (io) => {
       // Debug logs: confirm the server is emitting socket events for new orders
       try {
         console.log('📡 Emitting socket events for new order:', { orderId: result.insertId, agent_id: assignedAgentId, restaurant_id: rid });
+        
+        // Emit to all connected users/admins
         io.emit("newOrder", payload);
+        
+        // Emit to the specific assigned agent (if any)
         if (assignedAgentId) {
           console.log(`📨 Emitting orderForAgent_${assignedAgentId}`);
           io.emit(`orderForAgent_${assignedAgentId}`, payload);
         }
+        
+        // Emit to the specific restaurant
         console.log(`📨 Emitting orderForRestaurant_${rid}`);
         io.emit(`orderForRestaurant_${rid}`, payload);
+        
+        // NEW: Emit to ALL online agents so they can see available orders
+        console.log(`📨 Broadcasting order to all online agents`);
+        io.emit("newAvailableOrder", payload);
+        
       } catch (emitErr) {
         console.error('Socket emit failed for new order:', emitErr);
       }
 
-      res.json({ success: true, order_id: result.insertId, order_code: orderCode, agent_id: assignedAgentId });
+  // ============================================
+  // UPDATE ORDER DELIVERY STATE
+  // ============================================
+  router.put("/:orderId/status", async (req, res) => {
+    const { orderId } = req.params;
+    const { tracking_status, latitude, longitude } = req.body;
+    const agentId = req.user?.agent_id || req.user?.user_id;
+
+    try {
+      // Validate tracking_status
+      const validStatuses = [
+        'waiting',
+        'agent_assigned',
+        'agent_going_to_restaurant',
+        'arrived_at_restaurant',
+        'picked_up',
+        'in_transit',
+        'delivered'
+      ];
+
+      if (!tracking_status || !validStatuses.includes(tracking_status)) {
+        return res.status(400).json({ 
+          error: "Invalid tracking status. Valid values: " + validStatuses.join(", ")
+        });
+      }
+
+      // Get current order
+      const [orders] = await db.execute(
+        "SELECT id, user_id, agent_id, restaurant_id, status FROM orders WHERE id = ?",
+        [orderId]
+      );
+
+      if (!orders || orders.length === 0) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      const order = orders[0];
+
+      // Security: Verify agent can only update own orders
+      if (req.user.role === 'delivery_agent' && order.agent_id !== agentId) {
+        return res.status(403).json({ error: "You can only update your assigned orders" });
+      }
+
+      // Build update query based on status
+      let updateQuery = "UPDATE orders SET tracking_status = ?";
+      let params = [tracking_status];
+
+      // Update related timestamp columns
+      if (tracking_status === 'agent_assigned') {
+        updateQuery += ", agent_assigned_at = NOW(), status = 'Confirmed'";
+      } else if (tracking_status === 'picked_up') {
+        updateQuery += ", picked_up_at = NOW(), status = 'Picked Up'";
+      } else if (tracking_status === 'delivered') {
+        updateQuery += ", delivered_at = NOW(), status = 'Delivered'";
+      } else if (tracking_status === 'agent_going_to_restaurant') {
+        // Keep as "Confirmed" status
+      } else if (tracking_status === 'arrived_at_restaurant') {
+        // Keep as "Confirmed" or "Preparing" 
+      } else if (tracking_status === 'in_transit') {
+        updateQuery += ", status = 'In Transit'";
+      }
+
+      // Add order ID to WHERE clause
+      updateQuery += " WHERE id = ?";
+      params.push(orderId);
+
+      // Execute update
+      await db.execute(updateQuery, params);
+
+      // Log tracking event
+      await db.execute(
+        `INSERT INTO order_tracking_events (order_id, event_type, event_data, latitude, longitude) 
+         VALUES (?, ?, ?, ?, ?)`,
+        [
+          orderId,
+          tracking_status,
+          JSON.stringify({ agent_id: agentId }),
+          latitude || null,
+          longitude || null
+        ]
+      );
+
+      // Get updated order details for response
+      const [updatedOrders] = await db.execute(
+        `SELECT o.*, 
+                r.name as restaurant_name, r.lat as restaurant_lat, r.lng as restaurant_lng,
+                a.name as agent_name, a.phone as agent_phone,
+                u.name as customer_name, u.phone as customer_phone
+         FROM orders o
+         LEFT JOIN restaurants r ON o.restaurant_id = r.id
+         LEFT JOIN agents a ON o.agent_id = a.id
+         LEFT JOIN users u ON o.user_id = u.id
+         WHERE o.id = ?`,
+        [orderId]
+      );
+
+      const updatedOrder = updatedOrders[0];
+
+      // Emit Socket.IO event to all listeners
+      io.emit(`order_${orderId}_status_update`, {
+        order_id: orderId,
+        tracking_status,
+        status: updatedOrder.status,
+        agent_id: order.agent_id,
+        user_id: order.user_id,
+        latitude,
+        longitude,
+        timestamp: new Date().toISOString()
+      });
+
+      // Emit specific events based on status
+      if (tracking_status === 'delivered') {
+        // Notify user that order is delivered
+        io.emit(`order_${orderId}_delivered`, {
+          order_id: orderId,
+          message: "Your order has been delivered",
+          timestamp: new Date().toISOString()
+        });
+      } else if (tracking_status === 'picked_up') {
+        // Notify user that agent picked up order from restaurant
+        io.emit(`order_${orderId}_picked_up`, {
+          order_id: orderId,
+          message: "Agent has picked up your order",
+          agent_name: updatedOrder.agent_name,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      res.json({
+        success: true,
+        order_id: orderId,
+        tracking_status,
+        order: updatedOrder
+      });
     } catch (err) {
-      console.error("❌ Order save failed:", err);
-      // Provide error details for easier debugging in development
-      res.status(500).json({ error: "Database error saving order", details: err.message });
+      console.error("Update order status error:", err);
+      res.status(500).json({ 
+        error: "Failed to update order status",
+        details: err.message 
+      });
     }
   });
 
   return router;
 };
+
