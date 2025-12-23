@@ -152,6 +152,63 @@ module.exports = (db, io) => {
   });
 
   // ============================================
+  // REJECT ORDER (Agent unassigns)
+  // ============================================
+  router.post("/orders/:orderId/reject", async (req, res) => {
+    const { orderId } = req.params;
+    const { agent_id, reason } = req.body;
+
+    if (!agent_id) {
+      return res.status(400).json({ error: "Agent ID required" });
+    }
+
+    try {
+      const [orders] = await db.execute(
+        "SELECT agent_id, status FROM orders WHERE id = ? LIMIT 1",
+        [orderId]
+      );
+      if (!orders || !orders.length) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+      const order = orders[0];
+
+      if (Number(order.agent_id) !== Number(agent_id)) {
+        return res.status(403).json({ error: "You are not assigned to this order" });
+      }
+
+      // Unassign agent and revert status to Pending
+      await db.execute(
+        `UPDATE orders 
+         SET agent_id = NULL, status = 'Pending', tracking_status = 'waiting' 
+         WHERE id = ?`,
+        [orderId]
+      );
+
+      // Log tracking event
+      await db.execute(
+        "INSERT INTO order_tracking_events (order_id, event_type, event_data) VALUES (?, ?, ?)",
+        [orderId, "agent_rejected", JSON.stringify({ agent_id, reason })]
+      );
+
+      // Broadcast to user tracking page and available agents
+      io.emit(`order_${orderId}_update`, {
+        type: "agent_rejected",
+        order_id: orderId,
+        agent_id,
+        reason: reason || null,
+        timestamp: new Date().toISOString()
+      });
+
+      io.emit("newAvailableOrder", { id: Number(orderId) });
+
+      res.json({ success: true, message: "Order rejected and returned to queue" });
+    } catch (err) {
+      console.error("Reject order error:", err);
+      res.status(500).json({ error: "Failed to reject order" });
+    }
+  });
+
+  // ============================================
   // GET ORDER TRACKING DETAILS
   // ============================================
   router.get("/orders/:orderId/tracking", async (req, res) => {
@@ -303,6 +360,36 @@ module.exports = (db, io) => {
     } catch (err) {
       console.error("Get agent location error:", err);
       res.status(500).json({ error: "Failed to get location" });
+    }
+  });
+
+  // ============================================
+  // SAVE AGENT RATING (Customer after delivery)
+  // ============================================
+  router.post("/orders/:orderId/rating", async (req, res) => {
+    const { orderId } = req.params;
+    const { agent_id, rating, feedback } = req.body;
+
+    if (!agent_id || !rating) {
+      return res.status(400).json({ error: "agent_id and rating required" });
+    }
+
+    try {
+      // Validate order is delivered and belongs to agent
+      const [rows] = await db.execute("SELECT agent_id, status FROM orders WHERE id = ? LIMIT 1", [orderId]);
+      if (!rows || !rows.length) return res.status(404).json({ error: "Order not found" });
+      const order = rows[0];
+      if (Number(order.agent_id) !== Number(agent_id)) return res.status(403).json({ error: "Agent mismatch" });
+      if (order.status !== 'Delivered') return res.status(400).json({ error: "Order not delivered yet" });
+
+      await db.execute(
+        "INSERT INTO agent_ratings (agent_id, order_id, rating, feedback) VALUES (?, ?, ?, ?)",
+        [agent_id, orderId, rating, feedback || null]
+      );
+      res.json({ success: true });
+    } catch (err) {
+      console.error("Save rating error:", err);
+      res.status(500).json({ error: "Failed to save rating" });
     }
   });
 

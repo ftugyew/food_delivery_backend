@@ -45,6 +45,50 @@ module.exports = (io) => {
     });
   });
 
+  // Wallet balance
+  router.get('/:agent_id/wallet', async (req, res) => {
+    try {
+      const { agent_id } = req.params;
+      const [walletRows] = await db.execute("SELECT balance, updated_at FROM agent_wallets WHERE agent_id = ? LIMIT 1", [agent_id]);
+      const wallet = walletRows.length ? walletRows[0] : { balance: 0, updated_at: null };
+      const [payouts] = await db.execute(
+        "SELECT id, amount, status, requested_at, processed_at FROM agent_payouts WHERE agent_id = ? ORDER BY requested_at DESC LIMIT 10",
+        [agent_id]
+      );
+      res.json({ wallet, payouts });
+    } catch (err) {
+      console.error("Wallet fetch error:", err?.message);
+      res.status(500).json({ error: 'Failed to fetch wallet' });
+    }
+  });
+
+  // Request payout
+  router.post('/payout', async (req, res) => {
+    try {
+      const { agent_id, amount } = req.body;
+      if (!agent_id || !amount || amount <= 0) return res.status(400).json({ error: 'Invalid payout request' });
+      await db.execute("INSERT INTO agent_payouts (agent_id, amount, status) VALUES (?, ?, 'requested')", [agent_id, amount]);
+      res.json({ message: '✅ Payout requested' });
+    } catch (err) {
+      console.error("Payout request error:", err?.message);
+      res.status(500).json({ error: 'Failed to request payout' });
+    }
+  });
+
+  // Ratings summary
+  router.get('/:agent_id/ratings', async (req, res) => {
+    try {
+      const { agent_id } = req.params;
+      const [avgRows] = await db.execute("SELECT AVG(rating) as avg_rating, COUNT(*) as total FROM agent_ratings WHERE agent_id = ?", [agent_id]);
+      const summary = avgRows[0] || { avg_rating: null, total: 0 };
+      const [ratings] = await db.execute("SELECT order_id, rating, feedback, created_at FROM agent_ratings WHERE agent_id = ? ORDER BY created_at DESC LIMIT 20", [agent_id]);
+      res.json({ summary, ratings });
+    } catch (err) {
+      console.error("Ratings fetch error:", err?.message);
+      res.status(500).json({ error: 'Failed to fetch ratings' });
+    }
+  });
+
   // Chat/Call placeholder endpoints
   router.post('/chat', (req, res) => {
     // { order_id, agent_id, customer_id, message }
