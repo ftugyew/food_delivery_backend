@@ -74,25 +74,50 @@ module.exports = (io) => {
 
       // Update agent location in database
       await db.execute(
-        "UPDATE agents SET lat = ?, lng = ?, status = 'Active' WHERE id = ?",
+        "UPDATE agents SET lat = ?, lng = ?, status = 'Active', updated_at = NOW() WHERE id = ?",
         [lat, lng, agent_id]
       );
 
-      // Get all orders for this agent
-      const [orders] = await db.execute(
-        "SELECT id FROM orders WHERE agent_id = ? AND status NOT IN ('Completed', 'Cancelled')",
+      // Save to agent_locations table for history tracking
+      try {
+        // Get active orders for this agent
+        const [orders] = await db.execute(
+          "SELECT id FROM orders WHERE agent_id = ? AND status NOT IN ('Delivered', 'Cancelled') LIMIT 1",
+          [agent_id]
+        );
+        
+        const orderId = orders.length > 0 ? orders[0].id : null;
+        
+        // Insert location history
+        await db.execute(
+          "INSERT INTO agent_locations (agent_id, order_id, latitude, longitude, timestamp) VALUES (?, ?, ?, ?, NOW())",
+          [agent_id, orderId, lat, lng]
+        );
+      } catch (locErr) {
+        console.warn("Failed to save location history:", locErr.message);
+      }
+
+      // Get all active orders for this agent
+      const [activeOrders] = await db.execute(
+        "SELECT id FROM orders WHERE agent_id = ? AND status NOT IN ('Delivered', 'Cancelled')",
         [agent_id]
       );
 
-      // Emit location update for each order
-      orders.forEach(order => {
-        io.emit(`trackOrder_${order.id}`, { agent_id, lat, lng });
+      // Emit location update for each active order
+      activeOrders.forEach(order => {
+        io.emit(`trackOrder_${order.id}`, { agent_id, lat, lng, timestamp: new Date().toISOString() });
+        io.emit(`order_${order.id}_location`, { 
+          agent_id, 
+          latitude: lat, 
+          longitude: lng,
+          timestamp: new Date().toISOString() 
+        });
       });
 
       // Also emit general location update
       io.emit("agentLocation", { agent_id, lat, lng });
 
-      console.log(`📍 Agent ${agent_id} location updated: ${lat}, ${lng}`);
+      console.log(`📍 Agent ${agent_id} location updated in DB: ${lat}, ${lng}`);
       res.json({ success: true, message: "Location updated", agent_id, lat, lng });
     } catch (err) {
       console.error("Location update error:", err);
