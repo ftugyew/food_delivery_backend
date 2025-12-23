@@ -329,6 +329,15 @@ module.exports = (io) => {
         console.error('Socket emit failed for new order:', emitErr);
       }
 
+      // Respond to client with created order
+      return res.status(201).json({ message: "Order created", order: payload });
+
+    } catch (err) {
+      console.error("Error creating order (POST /new):", err);
+      return res.status(500).json({ error: "Failed to create order", details: err.message });
+    }
+  });
+
   // ============================================
   // UPDATE ORDER DELIVERY STATE
   // ============================================
