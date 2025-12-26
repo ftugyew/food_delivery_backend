@@ -34,15 +34,55 @@ module.exports = (io) => {
   });
 
   // Break/Offline mode
-  router.post('/availability', (req, res) => {
-    const { agent_id, available } = req.body;
-    // Map availability to enum: Active / Inactive (schema supports 'Busy' as well)
-    const newStatus = available ? 'Active' : 'Inactive';
-    db.query('UPDATE agents SET status=? WHERE id=?', [newStatus, agent_id], (err) => {
-      if (err) return res.status(500).json({ error: 'Failed to update availability' });
+  router.post('/availability', async (req, res) => {
+    try {
+      const { agent_id, available } = req.body;
+      
+      if (!agent_id) {
+        return res.status(400).json({ error: 'agent_id required' });
+      }
+
+      // Map availability to enum: Active / Inactive (schema supports 'Busy' as well)
+      const newStatus = available ? 'Active' : 'Inactive';
+      
+      // Update both status and is_online flag
+      await db.execute(
+        'UPDATE agents SET status=?, is_online=? WHERE id=?',
+        [newStatus, available, agent_id]
+      );
+
+      console.log(`🔄 Agent ${agent_id} is now ${available ? 'ONLINE' : 'OFFLINE'}`);
+
+      // Broadcast availability change
       io.emit('agentAvailability', { agent_id, available, status: newStatus });
-      res.json({ message: '✅ Availability updated', status: newStatus });
-    });
+
+      // If going online, send available orders
+      if (available) {
+        const [waitingOrders] = await db.execute(
+          `SELECT o.*, r.name as restaurant_name, r.lat as restaurant_lat, r.lng as restaurant_lng
+           FROM orders o
+           LEFT JOIN restaurants r ON o.restaurant_id = r.id
+           WHERE o.status = 'waiting_for_agent' AND o.agent_id IS NULL
+           ORDER BY o.created_at ASC`
+        );
+
+        if (waitingOrders.length > 0) {
+          console.log(`📦 Sending ${waitingOrders.length} waiting orders to agent ${agent_id}`);
+          waitingOrders.forEach(order => {
+            io.emit(`agent_${agent_id}_new_order`, order);
+          });
+        }
+      }
+
+      res.json({ 
+        success: true,
+        message: `✅ Availability updated: ${available ? 'Online' : 'Offline'}`, 
+        status: newStatus 
+      });
+    } catch (err) {
+      console.error("Availability update error:", err);
+      res.status(500).json({ error: 'Failed to update availability', details: err.message });
+    }
   });
 
   // Wallet balance
@@ -192,16 +232,39 @@ module.exports = (io) => {
   });
 
   // Fetch assigned orders (include newly auto-assigned orders)
-  router.get("/:agent_id/orders", (req, res) => {
-    const { agent_id } = req.params;
-    // Show orders that the agent needs to act on: Confirmed (auto-assigned), Pending, Preparing, Ready, Picked Up
-    const statuses = ['Pending','Confirmed','Preparing','Ready','Picked Up'];
-    const placeholders = statuses.map(() => '?').join(',');
-    const sql = `SELECT * FROM orders WHERE agent_id = ? AND status IN (${placeholders}) ORDER BY created_at DESC`;
-    db.query(sql, [agent_id, ...statuses], (err, orders) => {
-      if (err) return res.status(500).json({ error: "Failed to fetch orders" });
-      res.json(orders);
-    });
+  router.get("/:agent_id/orders", async (req, res) => {
+    try {
+      const { agent_id } = req.params;
+      
+      // Show two categories:
+      // 1. Orders assigned to this agent (agent_assigned, Confirmed, Preparing, Ready, Picked Up)
+      // 2. Available orders (waiting_for_agent) if agent is online
+      
+      const [assignedOrders] = await db.execute(
+        `SELECT o.*, r.name as restaurant_name, r.lat as restaurant_lat, r.lng as restaurant_lng
+         FROM orders o
+         LEFT JOIN restaurants r ON o.restaurant_id = r.id
+         WHERE o.agent_id = ? AND o.status IN ('agent_assigned', 'Confirmed', 'Preparing', 'Ready', 'Picked Up')
+         ORDER BY o.created_at DESC`,
+        [agent_id]
+      );
+
+      const [availableOrders] = await db.execute(
+        `SELECT o.*, r.name as restaurant_name, r.lat as restaurant_lat, r.lng as restaurant_lng
+         FROM orders o
+         LEFT JOIN restaurants r ON o.restaurant_id = r.id
+         WHERE o.status = 'waiting_for_agent' AND o.agent_id IS NULL
+         ORDER BY o.created_at ASC`
+      );
+
+      // Combine: assigned orders first, then available
+      const allOrders = [...assignedOrders, ...availableOrders];
+
+      res.json(allOrders);
+    } catch (err) {
+      console.error("Failed to fetch orders:", err);
+      res.status(500).json({ error: "Failed to fetch orders", details: err.message });
+    }
   });
 
   // Resolve agent by user_id (to map logged-in delivery user -> agent id)

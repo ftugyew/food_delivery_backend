@@ -54,7 +54,7 @@ module.exports = (io) => {
     return candidates[0]?.id || null;
   };
   
-  // Place Order (Auto-Assign Delivery)
+  // Place Order (Broadcast to Online Agents)
   router.post("/", async (req, res) => {
     const { user_id, restaurant_id, items, total, rest_lat, rest_lng, payment_type, estimated_delivery, delivery_address, delivery_lat, delivery_lng } = req.body;
 
@@ -69,29 +69,24 @@ module.exports = (io) => {
     try {
       // Determine restaurant coordinates: prefer DB, fallback to provided rest_lat/rest_lng
       let rlat = null, rlng = null;
+      let restaurantName = null;
       try {
         // Support both legacy (lat/lng) and full (latitude/longitude) column names
         const [rows] = await db.execute(
-          "SELECT COALESCE(lat, latitude) AS lat, COALESCE(lng, longitude) AS lng FROM restaurants WHERE id = ? LIMIT 1",
+          "SELECT name, COALESCE(lat, latitude) AS lat, COALESCE(lng, longitude) AS lng FROM restaurants WHERE id = ? LIMIT 1",
           [restaurant_id]
         );
-        if (rows && rows.length && rows[0].lat != null && rows[0].lng != null) {
-          rlat = Number(rows[0].lat); rlng = Number(rows[0].lng);
+        if (rows && rows.length) {
+          if (rows[0].lat != null && rows[0].lng != null) {
+            rlat = Number(rows[0].lat); rlng = Number(rows[0].lng);
+          }
+          restaurantName = rows[0].name;
         }
       } catch (_) {}
       if (rlat == null || rlng == null) {
         if (isFinite(Number(rest_lat)) && isFinite(Number(rest_lng))) {
           rlat = Number(rest_lat); rlng = Number(rest_lng);
         }
-      }
-
-      // Pick nearest active agent (if coordinates known); else fallback to any Active
-  let agent_id = await pickNearestAgent(db, rlat, rlng);
-      if (!agent_id) {
-        try {
-          const [agents] = await db.execute("SELECT id FROM agents WHERE status='Active' ORDER BY id ASC LIMIT 1");
-          if (agents && agents.length) agent_id = agents[0].id;
-        } catch (_) {}
       }
 
       // Generate unique 12-digit order ID
@@ -117,31 +112,198 @@ module.exports = (io) => {
         uniqueOrderId = Date.now().toString().padStart(12, '0').slice(-12);
       }
 
-      const statusVar = agent_id ? 'Confirmed' : 'Pending';
+      // Save order with status "waiting_for_agent" - NO auto-assignment
       const [result] = await db.execute(
-        "INSERT INTO orders (user_id, restaurant_id, items, total, agent_id, status, order_id, payment_type, estimated_delivery, delivery_address, delivery_lat, delivery_lng) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [user_id, restaurant_id, JSON.stringify(items), total, agent_id, statusVar, uniqueOrderId, payment_type || null, estimated_delivery || null, delivery_address || null, delivery_lat || null, delivery_lng || null]
+        "INSERT INTO orders (user_id, restaurant_id, items, total, agent_id, status, order_id, payment_type, estimated_delivery, delivery_address, delivery_lat, delivery_lng) VALUES (?, ?, ?, ?, NULL, 'waiting_for_agent', ?, ?, ?, ?, ?, ?)",
+        [user_id, restaurant_id, JSON.stringify(items), total, uniqueOrderId, payment_type || null, estimated_delivery || null, delivery_address || null, delivery_lat || null, delivery_lng || null]
       );
+
+      // Calculate distance estimate if coordinates available
+      let distanceKm = null;
+      if (rlat && rlng && delivery_lat && delivery_lng) {
+        const toRad = (d) => (d * Math.PI) / 180;
+        const R = 6371;
+        const dLat = toRad(Number(delivery_lat) - rlat);
+        const dLng = toRad(Number(delivery_lng) - rlng);
+        const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(rlat)) * Math.cos(toRad(Number(delivery_lat))) * Math.sin(dLng / 2) ** 2;
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        distanceKm = (R * c).toFixed(2);
+      }
 
       const newOrder = { 
         id: result.insertId,
         order_id: uniqueOrderId,
         user_id, 
-        restaurant_id, 
+        restaurant_id,
+        restaurant_name: restaurantName,
+        restaurant_lat: rlat,
+        restaurant_lng: rlng,
         items, 
         total, 
-        agent_id, 
-        status: statusVar,
+        agent_id: null, 
+        status: 'waiting_for_agent',
         payment_type: payment_type || null,
         estimated_delivery: estimated_delivery || null,
-        delivery_address: delivery_address || null
+        delivery_address: delivery_address || null,
+        delivery_lat: delivery_lat || null,
+        delivery_lng: delivery_lng || null,
+        distance_km: distanceKm,
+        payout_estimate: (Number(total) * 0.15).toFixed(2) // 15% of order total
       };
+
+      // Fetch all ONLINE agents
+      const [onlineAgents] = await db.execute(
+        "SELECT id, name FROM agents WHERE is_online = TRUE AND is_busy = FALSE"
+      );
+
+      console.log(`📡 Broadcasting order #${result.insertId} to ${onlineAgents.length} online agents`);
+
+      // Broadcast to ALL online agents
+      if (onlineAgents.length > 0) {
+        onlineAgents.forEach(agent => {
+          io.emit(`agent_${agent.id}_new_order`, newOrder);
+          console.log(`  ✅ Sent to agent ${agent.id} (${agent.name})`);
+        });
+      }
+
+      // General broadcast for admin/monitoring
       io.emit("newOrder", newOrder);
-      if (agent_id) io.emit(`orderForAgent_${agent_id}`, newOrder);
-      res.json({ message: "✅ Order placed", order: newOrder });
+      io.emit("newAvailableOrder", newOrder);
+      io.emit(`orderForRestaurant_${restaurant_id}`, newOrder);
+
+      res.json({ message: "✅ Order placed and broadcast to agents", order: newOrder });
     } catch (err) {
       console.error("Order creation error:", err);
       res.status(500).json({ error: "Order failed", details: err.message });
+    }
+  });
+
+  // ============================================
+  // AGENT ACCEPTS ORDER (ATOMIC ASSIGNMENT)
+  // ============================================
+  router.post("/accept-order", async (req, res) => {
+    const { order_id, agent_id } = req.body;
+
+    if (!order_id || !agent_id) {
+      return res.status(400).json({ error: "order_id and agent_id required" });
+    }
+
+    try {
+      // Check if agent is online and not busy
+      const [agents] = await db.execute(
+        "SELECT id, name, is_online, is_busy FROM agents WHERE id = ? LIMIT 1",
+        [agent_id]
+      );
+
+      if (!agents || agents.length === 0) {
+        return res.status(404).json({ error: "Agent not found" });
+      }
+
+      const agent = agents[0];
+
+      if (!agent.is_online) {
+        return res.status(403).json({ error: "You are offline. Please go online to accept orders." });
+      }
+
+      if (agent.is_busy) {
+        return res.status(403).json({ error: "You already have an active order. Complete it first." });
+      }
+
+      // ATOMIC UPDATE: Only assign if still waiting_for_agent (race condition protection)
+      const [result] = await db.execute(
+        `UPDATE orders 
+         SET agent_id = ?, status = 'agent_assigned', updated_at = NOW() 
+         WHERE id = ? AND agent_id IS NULL AND status = 'waiting_for_agent'`,
+        [agent_id, order_id]
+      );
+
+      if (result.affectedRows === 0) {
+        // Order already taken by another agent
+        return res.status(409).json({ 
+          error: "Order already accepted by another agent",
+          code: "ORDER_TAKEN"
+        });
+      }
+
+      // Mark agent as busy
+      await db.execute(
+        "UPDATE agents SET is_busy = TRUE WHERE id = ?",
+        [agent_id]
+      );
+
+      // Fetch complete order details
+      const [orders] = await db.execute(
+        `SELECT o.*, r.name as restaurant_name, r.lat as restaurant_lat, r.lng as restaurant_lng
+         FROM orders o
+         LEFT JOIN restaurants r ON o.restaurant_id = r.id
+         WHERE o.id = ? LIMIT 1`,
+        [order_id]
+      );
+
+      const order = orders[0];
+
+      console.log(`✅ Order #${order_id} accepted by agent ${agent_id} (${agent.name})`);
+
+      // Notify the agent who got the order
+      io.emit(`agent_${agent_id}_order_assigned`, {
+        success: true,
+        order: order,
+        message: "Order assigned successfully"
+      });
+
+      // Notify ALL other online agents that this order is taken
+      const [otherAgents] = await db.execute(
+        "SELECT id FROM agents WHERE is_online = TRUE AND id != ?",
+        [agent_id]
+      );
+
+      otherAgents.forEach(otherAgent => {
+        io.emit(`agent_${otherAgent.id}_order_taken`, {
+          order_id: order_id,
+          message: "This order was accepted by another agent"
+        });
+      });
+
+      // General broadcast for tracking/admin
+      io.emit("orderUpdate", { order_id, status: "agent_assigned", agent_id });
+      io.emit(`order_${order_id}_assigned`, { agent_id, agent_name: agent.name });
+
+      res.json({ 
+        success: true, 
+        message: "Order accepted successfully",
+        order: order
+      });
+
+    } catch (err) {
+      console.error("Order acceptance error:", err);
+      res.status(500).json({ error: "Failed to accept order", details: err.message });
+    }
+  });
+
+  // ============================================
+  // AGENT REJECTS ORDER
+  // ============================================
+  router.post("/reject-order", async (req, res) => {
+    const { order_id, agent_id, reason } = req.body;
+
+    if (!order_id || !agent_id) {
+      return res.status(400).json({ error: "order_id and agent_id required" });
+    }
+
+    try {
+      console.log(`❌ Agent ${agent_id} rejected order #${order_id}. Reason: ${reason || 'Not specified'}`);
+
+      // Just log the rejection - order remains available for other agents
+      // Optionally: store rejection in a separate table for analytics
+
+      res.json({ 
+        success: true, 
+        message: "Order rejected. It remains available for other agents."
+      });
+
+    } catch (err) {
+      console.error("Order rejection error:", err);
+      res.status(500).json({ error: "Failed to reject order", details: err.message });
     }
   });
 
