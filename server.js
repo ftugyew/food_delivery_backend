@@ -21,6 +21,8 @@ const adminRoutes = require("./routes/admin");
 
 // ===== CORS (FINAL, SAFE) =====
 const allowedOrigins = [
+  "http://localhost",
+  "http://127.0.0.1",
   "http://localhost:3000",
   "http://localhost:5500",
   "http://localhost:5501"
@@ -39,6 +41,11 @@ app.use(
 
       // ✅ Allow ALL Vercel deployments (preview + prod)
       if (origin.endsWith(".vercel.app")) {
+        return callback(null, true);
+      }
+
+      // ✅ Allow Render-hosted frontend/backends (common for this project)
+      if (origin.endsWith(".onrender.com")) {
         return callback(null, true);
       }
 
