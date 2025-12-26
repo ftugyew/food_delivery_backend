@@ -236,6 +236,8 @@ module.exports = (io) => {
     try {
       const { agent_id } = req.params;
       
+      console.log(`📦 Fetching orders for agent ${agent_id}`);
+      
       // Show two categories:
       // 1. Orders assigned to this agent (agent_assigned, Confirmed, Preparing, Ready, Picked Up)
       // 2. Available orders (waiting_for_agent) if agent is online
@@ -257,6 +259,8 @@ module.exports = (io) => {
          ORDER BY o.created_at ASC`
       );
 
+      console.log(`  📋 Found ${assignedOrders.length} assigned orders and ${availableOrders.length} available orders`);
+      
       // Combine: assigned orders first, then available
       const allOrders = [...assignedOrders, ...availableOrders];
 
