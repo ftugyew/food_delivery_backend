@@ -54,186 +54,91 @@ module.exports = (io) => {
     return candidates[0]?.id || null;
   };
   
-  // Place Order (Broadcast to Online Agents)
+  // Place Order (Safe params: never send undefined to MySQL)
   router.post("/", async (req, res) => {
-    const { user_id, restaurant_id, items, total, rest_lat, rest_lng, payment_type, estimated_delivery, delivery_address, delivery_lat, delivery_lng } = req.body;
+    // Possible undefined fields from client
+    // user_id, restaurant_id, items, total, payment_type, estimated_delivery,
+    // delivery_address (object/string), delivery_lat, delivery_lng
 
-    // Validate request payload
-    if (!user_id || !restaurant_id || !items || !total) {
-      return res.status(400).json({ error: "Missing required fields: user_id, restaurant_id, items, total" });
+    // Helpers: normalize to safe types
+    const toNull = (v) => (v === undefined ? null : v);
+    const toNum = (v) => (v === undefined || v === null || v === "" ? null : Number(v));
+    const toStr = (v) => (v === undefined || v === null ? null : String(v));
+    const toJsonStr = (v, fallback = "[]") => {
+      if (v === undefined || v === null) return fallback;
+      try { return JSON.stringify(v); } catch (_) { return fallback; }
+    };
+
+    // Extract and sanitize
+    const userId = toNum(req.body.user_id);
+    const restaurantId = toNum(req.body.restaurant_id);
+    const itemsJson = toJsonStr(req.body.items, "[]");
+    const totalVal = toNum(req.body.total);
+    const paymentType = toStr(req.body.payment_type);
+    const etaStr = toStr(req.body.estimated_delivery);
+    const deliveryAddrJson = toJsonStr(req.body.delivery_address, null);
+    const dLat = toNum(req.body.delivery_lat);
+    const dLng = toNum(req.body.delivery_lng);
+
+    // Validate required DB NOT NULL fields
+    if (userId == null || restaurantId == null || totalVal == null) {
+      return res.status(400).json({ error: "Missing required fields: user_id, restaurant_id, total" });
     }
 
-    // Log the incoming request payload
-    console.log("Order payload:", req.body);
-
     try {
-      // Determine restaurant coordinates: prefer DB, fallback to provided rest_lat/rest_lng
-      let rlat = null, rlng = null;
-      let restaurantName = null;
-      try {
-        // Support both legacy (lat/lng) and full (latitude/longitude) column names
-        const [rows] = await db.execute(
-          "SELECT name, COALESCE(lat, latitude) AS lat, COALESCE(lng, longitude) AS lng FROM restaurants WHERE id = ? LIMIT 1",
-          [restaurant_id]
-        );
-        if (rows && rows.length) {
-          if (rows[0].lat != null && rows[0].lng != null) {
-            rlat = Number(rows[0].lat); rlng = Number(rows[0].lng);
-          }
-          restaurantName = rows[0].name;
-        }
-      } catch (_) {}
-      if (rlat == null || rlng == null) {
-        if (isFinite(Number(rest_lat)) && isFinite(Number(rest_lng))) {
-          rlat = Number(rest_lat); rlng = Number(rest_lng);
-        }
-      }
-
-      // Generate unique 12-digit order ID
+      // Generate unique 12-digit order_id
       let uniqueOrderId = null;
-      let attempts = 0;
-      const maxAttempts = 10;
-      
-      while (!uniqueOrderId && attempts < maxAttempts) {
-        // Generate random 12-digit number (100000000000 to 999999999999)
-        const randomOrderId = Math.floor(100000000000 + Math.random() * 900000000000).toString();
-        
-        // Check if this order_id already exists
-        const [existing] = await db.execute("SELECT id FROM orders WHERE order_id = ? LIMIT 1", [randomOrderId]);
-        
-        if (!existing || existing.length === 0) {
-          uniqueOrderId = randomOrderId;
-        }
-        attempts++;
+      for (let i = 0; i < 10 && !uniqueOrderId; i++) {
+        const randId = Math.floor(100000000000 + Math.random() * 900000000000).toString();
+        const [existing] = await db.execute("SELECT id FROM orders WHERE order_id = ? LIMIT 1", [randId]);
+        if (!existing || existing.length === 0) uniqueOrderId = randId;
       }
-      
-      // Fallback to timestamp-based ID if random generation fails
-      if (!uniqueOrderId) {
-        uniqueOrderId = Date.now().toString().padStart(12, '0').slice(-12);
-      }
+      if (!uniqueOrderId) uniqueOrderId = Date.now().toString().padStart(12, "0").slice(-12);
 
-      // Save order with status "waiting_for_agent" - NO auto-assignment
-      const [result] = await db.execute(
-        "INSERT INTO orders (user_id, restaurant_id, items, total, agent_id, status, order_id, payment_type, estimated_delivery, delivery_address, delivery_lat, delivery_lng) VALUES (?, ?, ?, ?, NULL, 'waiting_for_agent', ?, ?, ?, ?, ?, ?)",
-        [user_id, restaurant_id, JSON.stringify(items), total, uniqueOrderId, payment_type || null, estimated_delivery || null, delivery_address || null, delivery_lat || null, delivery_lng || null]
-      );
+      // Try insertion including tracking_status (preferred)
+      let insertSql = `INSERT INTO orders 
+        (user_id, restaurant_id, items, total, agent_id, status, tracking_status, order_id, payment_type, estimated_delivery, delivery_address, delivery_lat, delivery_lng)
+        VALUES (?, ?, ?, ?, NULL, 'Pending', 'waiting', ?, ?, ?, ?, ?, ?)`;
+      let params = [userId, restaurantId, itemsJson, totalVal, uniqueOrderId, paymentType, etaStr, deliveryAddrJson, dLat, dLng];
 
-      // Calculate distance estimate if coordinates available
-      let distanceKm = null;
-      if (rlat && rlng && delivery_lat && delivery_lng) {
-        const toRad = (d) => (d * Math.PI) / 180;
-        const R = 6371;
-        const dLat = toRad(Number(delivery_lat) - rlat);
-        const dLng = toRad(Number(delivery_lng) - rlng);
-        const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(rlat)) * Math.cos(toRad(Number(delivery_lat))) * Math.sin(dLng / 2) ** 2;
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        distanceKm = (R * c).toFixed(2);
+      let result;
+      try {
+        [result] = await db.execute(insertSql, params);
+      } catch (e) {
+        // Fallback: older schema without tracking_status or JSON delivery_address
+        console.warn("Primary INSERT failed, attempting fallback:", e.message);
+        insertSql = `INSERT INTO orders 
+          (user_id, restaurant_id, items, total, agent_id, status, order_id, payment_type, estimated_delivery, delivery_address, delivery_lat, delivery_lng)
+          VALUES (?, ?, ?, ?, NULL, 'Pending', ?, ?, ?, ?, ?, ?)`;
+        params = [userId, restaurantId, itemsJson, totalVal, uniqueOrderId, paymentType, etaStr, toStr(req.body.delivery_address) || null, dLat, dLng];
+        [result] = await db.execute(insertSql, params);
       }
 
-      const newOrder = { 
+      const newOrder = {
         id: result.insertId,
         order_id: uniqueOrderId,
-        user_id, 
-        restaurant_id,
-        restaurant_name: restaurantName,
-        restaurant_lat: rlat,
-        restaurant_lng: rlng,
-        items, 
-        total, 
-        agent_id: null, 
-        status: 'waiting_for_agent',
-        payment_type: payment_type || null,
-        estimated_delivery: estimated_delivery || null,
-        delivery_address: delivery_address || null,
-        delivery_lat: delivery_lat || null,
-        delivery_lng: delivery_lng || null,
-        distance_km: distanceKm,
-        payout_estimate: (Number(total) * 0.15).toFixed(2) // 15% of order total
+        user_id: userId,
+        restaurant_id: restaurantId,
+        items: req.body.items || [],
+        total: totalVal,
+        agent_id: null,
+        status: 'Pending',
+        tracking_status: 'waiting',
+        payment_type: paymentType,
+        estimated_delivery: etaStr,
+        delivery_address: req.body.delivery_address || null,
+        delivery_lat: dLat,
+        delivery_lng: dLng
       };
 
-      // Fetch ALL ACTIVE ONLINE agents with their complete location data for maps
-      const [onlineAgents] = await db.execute(
-        `SELECT 
-          id, 
-          name, 
-          phone, 
-          lat, 
-          lng, 
-          vehicle_type,
-          status,
-          is_online,
-          is_busy,
-          (
-            6371 * acos(
-              cos(radians(?)) * cos(radians(lat)) * cos(radians(lng) - radians(?)) +
-              sin(radians(?)) * sin(radians(lat))
-            )
-          ) as distance_from_delivery_km
-        FROM agents 
-        WHERE is_online = TRUE 
-          AND is_busy = FALSE 
-          AND status = 'Active'
-          AND lat IS NOT NULL 
-          AND lng IS NOT NULL
-        ORDER BY distance_from_delivery_km ASC`,
-        [delivery_lat, delivery_lng, delivery_lat]
-      );
-
-      console.log(`📡 Broadcasting order #${result.insertId} to ${onlineAgents.length} ACTIVE online agents`);
-      console.log(`   Restaurant: [${rlat}, ${rlng}] → Delivery: [${delivery_lat}, ${delivery_lng}]`);
-
-      // Broadcast to ALL active online agents with enriched order data
-      if (onlineAgents.length > 0) {
-        // Create enriched order object with maps data for each agent
-        onlineAgents.forEach((agent, index) => {
-          const enrichedOrder = {
-            ...newOrder,
-            id: result.insertId,
-            // Maps data for delivery location
-            delivery_maps: {
-              lat: delivery_lat,
-              lng: delivery_lng,
-              address: delivery_address,
-              zoom: 15
-            },
-            // Maps data for restaurant (pickup location)
-            restaurant_maps: {
-              lat: rlat,
-              lng: rlng,
-              name: restaurantName,
-              zoom: 15
-            },
-            // Agent's current location
-            agent_current_location: {
-              lat: agent.lat,
-              lng: agent.lng
-            },
-            // Distance from agent to delivery
-            distance_to_delivery_km: parseFloat(agent.distance_from_delivery_km || 0).toFixed(2),
-            // Rank this agent by proximity
-            agent_rank: index + 1,
-            // All available agents count
-            total_agents_notified: onlineAgents.length,
-            // Estimated arrival
-            estimated_arrival_mins: Math.round(parseFloat(agent.distance_from_delivery_km || 0) / 15 * 60) // Assuming 15 km/h avg
-          };
-          
-          io.emit(`agent_${agent.id}_new_order`, enrichedOrder);
-          console.log(`  ✅ Sent to agent ${agent.id} (${agent.name}) - Rank: ${index + 1}/${onlineAgents.length} - Distance: ${enrichedOrder.distance_to_delivery_km}km - ETA: ${enrichedOrder.estimated_arrival_mins}min`);
-        });
-      } else {
-        console.warn(`⚠️ No active online agents available to broadcast order #${result.insertId}`);
-      }
-
-      // General broadcast for admin/monitoring
+      // Broadcast generic new order event (admins/monitors)
       io.emit("newOrder", newOrder);
-      io.emit("newAvailableOrder", newOrder);
-      io.emit(`orderForRestaurant_${restaurant_id}`, newOrder);
+      io.emit(`orderForRestaurant_${restaurantId}`, newOrder);
 
-      res.json({ message: "✅ Order placed and broadcast to agents", order: newOrder });
+      return res.status(201).json({ message: "Order created", order: newOrder });
     } catch (err) {
       console.error("Order creation error:", err);
-      res.status(500).json({ error: "Order failed", details: err.message });
+      return res.status(500).json({ error: "Order failed", details: err.message });
     }
   });
 

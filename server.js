@@ -95,6 +95,47 @@ app.use("/api/restaurants", authMiddleware, restaurantsRoutes);
 const menuRoutes = require("./routes/menu");
 app.use("/api/menu", authMiddleware, menuRoutes);
 
+// ===== 6.1. SAFETY: Ensure DB enums support required order statuses =====
+(async function ensureOrderEnums() {
+  try {
+    // Check current enum for orders.status in the active database
+    const [rows] = await db.execute(
+      "SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = 'status'"
+    );
+    const colType = rows?.[0]?.COLUMN_TYPE || "";
+    const needsWaiting = !/waiting_for_agent/i.test(colType);
+    const needsAgentAssigned = !/agent_assigned/i.test(colType);
+
+    if (needsWaiting || needsAgentAssigned) {
+      console.log("⚙️ Updating orders.status enum to include required values...");
+      await db.execute(
+        "ALTER TABLE orders MODIFY COLUMN status ENUM('Pending','waiting_for_agent','agent_assigned','Confirmed','Preparing','Ready','Picked Up','Delivered','Cancelled') DEFAULT 'Pending'"
+      );
+      console.log("✅ orders.status enum updated");
+    } else {
+      console.log("✅ orders.status enum already compatible");
+    }
+
+    // Optionally ensure tracking_status includes 'cancelled' for consistency
+    try {
+      const [trows] = await db.execute(
+        "SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = 'tracking_status'"
+      );
+      const tType = trows?.[0]?.COLUMN_TYPE || "";
+      if (!/cancelled/i.test(tType)) {
+        await db.execute(
+          "ALTER TABLE orders MODIFY COLUMN tracking_status ENUM('waiting','agent_assigned','agent_going_to_restaurant','arrived_at_restaurant','picked_up','in_transit','delivered','cancelled') DEFAULT 'waiting'"
+        );
+        console.log("✅ orders.tracking_status enum updated");
+      }
+    } catch (e) {
+      console.warn("Tracking status check/update skipped:", e.message);
+    }
+  } catch (err) {
+    console.warn("Schema compatibility check failed:", err?.message);
+  }
+})();
+
 
 
 
