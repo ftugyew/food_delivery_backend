@@ -89,6 +89,223 @@ router.get("/orders", async (req, res) => {
   res.json(rows);
 });
 
+// ================= AUTO-ASSIGN AGENT TO ORDER =================
+/**
+ * POST /api/admin/orders/:orderId/assign
+ * Auto-assigns the nearest available agent to an order
+ * Uses transaction with row locking for atomicity
+ * Returns assigned agent details or error
+ */
+router.post("/orders/:orderId/assign", async (req, res) => {
+  const orderId = req.params.orderId;
+  const connection = await db.getConnection();
+  
+  try {
+    // Start transaction
+    await connection.beginTransaction();
+    
+    console.log(`📍 Attempting to assign agent for order ${orderId}`);
+    
+    // 1. Validate order exists and status is waiting_for_agent
+    const [orderRows] = await connection.execute(
+      "SELECT id, restaurant_id, delivery_lat, delivery_lng, status, agent_id FROM orders WHERE id = ?",
+      [orderId]
+    );
+    
+    if (!orderRows || orderRows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({
+        success: false,
+        error: "Order not found",
+        orderId
+      });
+    }
+    
+    const order = orderRows[0];
+    
+    // Check if order is already assigned
+    if (order.agent_id) {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        error: "Order is already assigned to an agent",
+        orderId,
+        assignedAgentId: order.agent_id
+      });
+    }
+    
+    // Check if order is in correct status
+    if (order.status !== 'waiting_for_agent') {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        error: `Order status is '${order.status}', must be 'waiting_for_agent'`,
+        orderId,
+        currentStatus: order.status
+      });
+    }
+    
+    // 2. Get restaurant coordinates
+    const [restRows] = await connection.execute(
+      "SELECT id, COALESCE(lat, latitude) as lat, COALESCE(lng, longitude) as lng FROM restaurants WHERE id = ?",
+      [order.restaurant_id]
+    );
+    
+    if (!restRows || restRows.length === 0) {
+      await connection.rollback();
+      return res.status(500).json({
+        success: false,
+        error: "Restaurant not found for order",
+        orderId,
+        restaurantId: order.restaurant_id
+      });
+    }
+    
+    const restaurant = restRows[0];
+    const deliveryLat = Number(order.delivery_lat);
+    const deliveryLng = Number(order.delivery_lng);
+    const restLat = Number(restaurant.lat);
+    const restLng = Number(restaurant.lng);
+    
+    // Validate coordinates
+    if (!isFinite(deliveryLat) || !isFinite(deliveryLng)) {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        error: "Invalid delivery coordinates",
+        orderId,
+        coordinates: { lat: deliveryLat, lng: deliveryLng }
+      });
+    }
+    
+    // 3. Find nearest available agent using Haversine formula
+    const haversineSQL = `
+      SELECT 
+        a.id,
+        a.name,
+        a.phone,
+        a.lat,
+        a.lng,
+        a.vehicle_type,
+        a.status,
+        a.is_online,
+        a.is_busy,
+        (
+          6371 * acos(
+            cos(radians(?)) * cos(radians(a.lat)) * cos(radians(a.lng) - radians(?)) +
+            sin(radians(?)) * sin(radians(a.lat))
+          )
+        ) as distance_km
+      FROM agents a
+      WHERE 
+        a.is_online = 1
+        AND a.is_busy = 0
+        AND a.status = 'Active'
+        AND a.lat IS NOT NULL
+        AND a.lng IS NOT NULL
+      ORDER BY distance_km ASC
+      LIMIT 1
+    `;
+    
+    const [agentRows] = await connection.execute(haversineSQL, [
+      deliveryLat,  // latitude of delivery location
+      deliveryLng,  // longitude of delivery location
+      deliveryLat   // latitude again for sin calculation
+    ]);
+    
+    if (!agentRows || agentRows.length === 0) {
+      await connection.rollback();
+      console.warn(`⚠️ No available agents found for order ${orderId}`);
+      return res.status(503).json({
+        success: false,
+        error: "No available agents at the moment",
+        orderId,
+        message: "All delivery agents are either offline or busy. Please try again shortly."
+      });
+    }
+    
+    const agent = agentRows[0];
+    const distanceKm = parseFloat(agent.distance_km).toFixed(2);
+    
+    console.log(`✅ Found nearest agent: ${agent.id} (${agent.name}) at ${distanceKm}km away`);
+    
+    // 4. Lock agent row and update is_busy (atomic operation)
+    const [lockRows] = await connection.execute(
+      "SELECT id FROM agents WHERE id = ? FOR UPDATE",
+      [agent.id]
+    );
+    
+    if (!lockRows || lockRows.length === 0) {
+      await connection.rollback();
+      return res.status(500).json({
+        success: false,
+        error: "Failed to lock agent row",
+        orderId,
+        agentId: agent.id
+      });
+    }
+    
+    // 5. Update agent: set is_busy = 1
+    await connection.execute(
+      "UPDATE agents SET is_busy = 1, status = 'Busy' WHERE id = ?",
+      [agent.id]
+    );
+    
+    console.log(`🔒 Agent ${agent.id} marked as busy`);
+    
+    // 6. Update order: assign agent, change status to agent_assigned
+    await connection.execute(
+      "UPDATE orders SET agent_id = ?, status = 'agent_assigned', tracking_status = 'accepted' WHERE id = ?",
+      [agent.id, orderId]
+    );
+    
+    console.log(`📦 Order ${orderId} assigned to agent ${agent.id}`);
+    
+    // Commit transaction
+    await connection.commit();
+    
+    // Return success response
+    return res.status(200).json({
+      success: true,
+      message: "Agent assigned successfully",
+      orderId,
+      agentId: agent.id,
+      agent: {
+        id: agent.id,
+        name: agent.name,
+        phone: agent.phone,
+        vehicleType: agent.vehicle_type,
+        distanceKm: distanceKm,
+        currentLocation: {
+          lat: agent.lat,
+          lng: agent.lng
+        }
+      }
+    });
+    
+  } catch (err) {
+    // Rollback on any error
+    try {
+      await connection.rollback();
+    } catch (rollbackErr) {
+      console.error("Rollback error:", rollbackErr?.message);
+    }
+    
+    console.error("Assignment error:", err?.message || err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to assign agent",
+      orderId,
+      details: err?.message || "Unknown error"
+    });
+  } finally {
+    // Release connection back to pool
+    if (connection) {
+      connection.release();
+    }
+  }
+});
+
 // ================= DELIVERY AGENTS =================
 router.get("/delivery", async (req, res) => {
   try {

@@ -151,19 +151,78 @@ module.exports = (io) => {
         payout_estimate: (Number(total) * 0.15).toFixed(2) // 15% of order total
       };
 
-      // Fetch all ONLINE agents
+      // Fetch ALL ACTIVE ONLINE agents with their complete location data for maps
       const [onlineAgents] = await db.execute(
-        "SELECT id, name FROM agents WHERE is_online = TRUE AND is_busy = FALSE"
+        `SELECT 
+          id, 
+          name, 
+          phone, 
+          lat, 
+          lng, 
+          vehicle_type,
+          status,
+          is_online,
+          is_busy,
+          (
+            6371 * acos(
+              cos(radians(?)) * cos(radians(lat)) * cos(radians(lng) - radians(?)) +
+              sin(radians(?)) * sin(radians(lat))
+            )
+          ) as distance_from_delivery_km
+        FROM agents 
+        WHERE is_online = TRUE 
+          AND is_busy = FALSE 
+          AND status = 'Active'
+          AND lat IS NOT NULL 
+          AND lng IS NOT NULL
+        ORDER BY distance_from_delivery_km ASC`,
+        [delivery_lat, delivery_lng, delivery_lat]
       );
 
-      console.log(`📡 Broadcasting order #${result.insertId} to ${onlineAgents.length} online agents`);
+      console.log(`📡 Broadcasting order #${result.insertId} to ${onlineAgents.length} ACTIVE online agents`);
+      console.log(`   Restaurant: [${rlat}, ${rlng}] → Delivery: [${delivery_lat}, ${delivery_lng}]`);
 
-      // Broadcast to ALL online agents
+      // Broadcast to ALL active online agents with enriched order data
       if (onlineAgents.length > 0) {
-        onlineAgents.forEach(agent => {
-          io.emit(`agent_${agent.id}_new_order`, newOrder);
-          console.log(`  ✅ Sent to agent ${agent.id} (${agent.name})`);
+        // Create enriched order object with maps data for each agent
+        onlineAgents.forEach((agent, index) => {
+          const enrichedOrder = {
+            ...newOrder,
+            id: result.insertId,
+            // Maps data for delivery location
+            delivery_maps: {
+              lat: delivery_lat,
+              lng: delivery_lng,
+              address: delivery_address,
+              zoom: 15
+            },
+            // Maps data for restaurant (pickup location)
+            restaurant_maps: {
+              lat: rlat,
+              lng: rlng,
+              name: restaurantName,
+              zoom: 15
+            },
+            // Agent's current location
+            agent_current_location: {
+              lat: agent.lat,
+              lng: agent.lng
+            },
+            // Distance from agent to delivery
+            distance_to_delivery_km: parseFloat(agent.distance_from_delivery_km || 0).toFixed(2),
+            // Rank this agent by proximity
+            agent_rank: index + 1,
+            // All available agents count
+            total_agents_notified: onlineAgents.length,
+            // Estimated arrival
+            estimated_arrival_mins: Math.round(parseFloat(agent.distance_from_delivery_km || 0) / 15 * 60) // Assuming 15 km/h avg
+          };
+          
+          io.emit(`agent_${agent.id}_new_order`, enrichedOrder);
+          console.log(`  ✅ Sent to agent ${agent.id} (${agent.name}) - Rank: ${index + 1}/${onlineAgents.length} - Distance: ${enrichedOrder.distance_to_delivery_km}km - ETA: ${enrichedOrder.estimated_arrival_mins}min`);
         });
+      } else {
+        console.warn(`⚠️ No active online agents available to broadcast order #${result.insertId}`);
       }
 
       // General broadcast for admin/monitoring
