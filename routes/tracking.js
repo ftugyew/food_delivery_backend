@@ -215,26 +215,61 @@ module.exports = (db, io) => {
     const { orderId } = req.params;
 
     try {
-      const [orders] = await db.execute(
-        `SELECT o.*, 
+      // First, try with all columns
+      let query = `SELECT o.*, 
                 r.name as restaurant_name, r.address as restaurant_address,
-                r.lat as restaurant_lat, r.lng as restaurant_lng, r.phone as restaurant_phone,
-                a.name as agent_name, a.phone as agent_phone, a.vehicle_type, a.vehicle_number, a.profile_image,
-                a.lat as agent_lat, a.lng as agent_lng,
+                r.phone as restaurant_phone,
+                a.name as agent_name, a.phone as agent_phone, a.vehicle_type,
                 u.name as customer_name, u.phone as customer_phone
          FROM orders o
          LEFT JOIN restaurants r ON o.restaurant_id = r.id
          LEFT JOIN agents a ON o.agent_id = a.id
          LEFT JOIN users u ON o.user_id = u.id
-         WHERE o.id = ?`,
-        [orderId]
-      );
+         WHERE o.id = ?`;
+
+      const [orders] = await db.execute(query, [orderId]);
 
       if (!orders || orders.length === 0) {
         return res.status(404).json({ error: "Order not found" });
       }
 
       const order = orders[0];
+
+      // Try to get restaurant coordinates (handle if columns don't exist)
+      try {
+        const [restaurantCoords] = await db.execute(
+          `SELECT lat as restaurant_lat, lng as restaurant_lng FROM restaurants WHERE id = ?`,
+          [order.restaurant_id]
+        );
+        if (restaurantCoords && restaurantCoords.length > 0) {
+          order.restaurant_lat = restaurantCoords[0].restaurant_lat;
+          order.restaurant_lng = restaurantCoords[0].restaurant_lng;
+        }
+      } catch (coordErr) {
+        console.warn("Restaurant coordinates not available:", coordErr.message);
+        order.restaurant_lat = null;
+        order.restaurant_lng = null;
+      }
+
+      // Try to get agent coordinates and details (handle if columns don't exist)
+      if (order.agent_id) {
+        try {
+          const [agentDetails] = await db.execute(
+            `SELECT lat as agent_lat, lng as agent_lng, vehicle_number, profile_image FROM agents WHERE id = ?`,
+            [order.agent_id]
+          );
+          if (agentDetails && agentDetails.length > 0) {
+            order.agent_lat = agentDetails[0].agent_lat;
+            order.agent_lng = agentDetails[0].agent_lng;
+            order.vehicle_number = agentDetails[0].vehicle_number;
+            order.profile_image = agentDetails[0].profile_image;
+          }
+        } catch (agentErr) {
+          console.warn("Agent coordinates not available:", agentErr.message);
+          order.agent_lat = null;
+          order.agent_lng = null;
+        }
+      }
 
       // Get latest agent location from tracking history
       if (order.agent_id) {
