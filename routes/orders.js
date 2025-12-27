@@ -306,14 +306,78 @@ module.exports = (io) => {
   });
 
   // ===== Update Order Status =====
-  router.post("/update", (req, res) => {
+  router.post("/update", async (req, res) => {
     const { order_id, status } = req.body;
-    db.execute("UPDATE orders SET status=? WHERE id=?", [status, order_id])
-      .then(() => res.json({ message: "Order updated successfully" }))
-      .catch(err => {
-        console.error(err);
-        res.status(500).json({ error: "Failed to update order status" });
-      });
+    
+    try {
+      // Update order status
+      await db.execute("UPDATE orders SET status=? WHERE id=?", [status, order_id]);
+      
+      // If restaurant accepts order, trigger delivery agent assignment flow
+      if (status === 'Accepted') {
+        console.log(`🍔 Restaurant accepted order #${order_id}. Preparing for delivery agent assignment...`);
+        
+        // Get order details with restaurant location
+        const [orderRows] = await db.execute(
+          `SELECT o.*, r.lat as restaurant_lat, r.lng as restaurant_lng, r.name as restaurant_name
+           FROM orders o
+           LEFT JOIN restaurants r ON o.restaurant_id = r.id
+           WHERE o.id = ?`,
+          [order_id]
+        );
+        
+        if (orderRows && orderRows.length > 0) {
+          const order = orderRows[0];
+          
+          // Change status to waiting_for_agent so delivery agents can see it
+          await db.execute(
+            "UPDATE orders SET status='waiting_for_agent' WHERE id=?",
+            [order_id]
+          );
+          
+          console.log(`📍 Order #${order_id} is now waiting for agent assignment`);
+          
+          // Get online agents
+          const [onlineAgents] = await db.execute(
+            "SELECT id, name, lat, lng FROM agents WHERE is_online = TRUE AND is_busy = FALSE AND status = 'Active'"
+          );
+          
+          if (onlineAgents && onlineAgents.length > 0) {
+            console.log(`📡 Broadcasting order #${order_id} to ${onlineAgents.length} online agents`);
+            
+            // Broadcast to all online agents
+            onlineAgents.forEach(agent => {
+              io.emit(`agent_${agent.id}_new_order`, {
+                ...order,
+                restaurant_name: order.restaurant_name,
+                restaurant_lat: order.restaurant_lat,
+                restaurant_lng: order.restaurant_lng
+              });
+            });
+            
+            // Also emit general broadcast
+            io.emit("newAvailableOrder", {
+              ...order,
+              restaurant_name: order.restaurant_name,
+              restaurant_lat: order.restaurant_lat,
+              restaurant_lng: order.restaurant_lng
+            });
+            
+            console.log(`✅ Order #${order_id} broadcasted to delivery agents`);
+          } else {
+            console.log(`⚠️ No online agents available for order #${order_id}`);
+          }
+        }
+      }
+      
+      // Emit general order update event
+      io.emit("orderUpdate", { order_id, status });
+      
+      res.json({ message: "Order updated successfully" });
+    } catch (err) {
+      console.error("Error updating order:", err);
+      res.status(500).json({ error: "Failed to update order status" });
+    }
   });
 
   // Save Order Details
