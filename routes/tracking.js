@@ -1,8 +1,80 @@
 // backend/routes/tracking.js
 const express = require("express");
 const router = express.Router();
+const {
+  ORDER_STATUS,
+  TRACKING_STATUS,
+  TRACKING_STATUS_VALUES,
+  ORDER_STATUS_VALUES
+} = require("../constants/statuses");
+const { assignAgentToOrder, AssignmentError } = require("../services/order-assignment");
 
 module.exports = (db, io) => {
+  const normalizeOrderStatus = (value) => {
+    if (!value) return null;
+    const raw = String(value).trim();
+    const lower = raw.toLowerCase();
+    switch (lower) {
+      case 'pending':
+        return ORDER_STATUS.PENDING;
+      case 'waiting':
+      case 'waiting_for_agent':
+      case 'waiting for agent':
+        return ORDER_STATUS.WAITING_AGENT;
+      case 'assigned':
+      case 'agent assigned':
+      case 'agent_assigned':
+        return ORDER_STATUS.AGENT_ASSIGNED;
+      case 'confirmed':
+        return ORDER_STATUS.CONFIRMED;
+      case 'preparing':
+        return ORDER_STATUS.PREPARING;
+      case 'ready':
+        return ORDER_STATUS.READY;
+      case 'picked up':
+      case 'picked_up':
+      case 'picked':
+        return ORDER_STATUS.PICKED_UP;
+      case 'delivered':
+        return ORDER_STATUS.DELIVERED;
+      case 'cancelled':
+      case 'canceled':
+        return ORDER_STATUS.CANCELLED;
+      default:
+        return ORDER_STATUS_VALUES.includes(raw) ? raw : null;
+    }
+  };
+
+  const normalizeTrackingStatus = (value) => {
+    if (!value) return null;
+    const raw = String(value).trim();
+    const lower = raw.toLowerCase();
+    switch (lower) {
+      case 'pending':
+      case 'waiting':
+        return TRACKING_STATUS.PENDING;
+      case 'accepted':
+      case 'agent_assigned':
+        return TRACKING_STATUS.ACCEPTED;
+      case 'agent_going_to_restaurant':
+        return TRACKING_STATUS.GOING_TO_RESTAURANT;
+      case 'arrived_at_restaurant':
+        return TRACKING_STATUS.ARRIVED;
+      case 'picked up':
+      case 'picked_up':
+        return TRACKING_STATUS.PICKED_UP;
+      case 'in_transit':
+        return TRACKING_STATUS.IN_TRANSIT;
+      case 'delivered':
+        return TRACKING_STATUS.DELIVERED;
+      case 'cancelled':
+      case 'canceled':
+        return TRACKING_STATUS.CANCELLED;
+      default:
+        return TRACKING_STATUS_VALUES.includes(raw) ? raw : null;
+    }
+  };
+
   // ============================================
   // ACCEPT ORDER (Delivery Agent)
   // ============================================
@@ -15,34 +87,8 @@ module.exports = (db, io) => {
     }
 
     try {
-      // Check if order exists and is not already assigned
-      const [orders] = await db.execute(
-        "SELECT * FROM orders WHERE id = ? LIMIT 1",
-        [orderId]
-      );
+      const { order } = await assignAgentToOrder({ db, orderId, agentId: agent_id });
 
-      if (!orders || orders.length === 0) {
-        return res.status(404).json({ error: "Order not found" });
-      }
-
-      const order = orders[0];
-      
-      if (order.agent_id && order.agent_id !== agent_id) {
-        return res.status(400).json({ error: "Order already assigned to another agent" });
-      }
-
-      // Update order with agent assignment
-      await db.execute(
-        `UPDATE orders 
-         SET agent_id = ?, 
-             status = 'Confirmed', 
-             tracking_status = 'agent_assigned',
-             agent_assigned_at = NOW()
-         WHERE id = ?`,
-        [agent_id, orderId]
-      );
-
-      // Get agent details
       const [agents] = await db.execute(
         "SELECT id, name, phone, vehicle_type, vehicle_number, profile_image FROM agents WHERE id = ?",
         [agent_id]
@@ -50,7 +96,6 @@ module.exports = (db, io) => {
 
       const agentData = agents[0] || {};
 
-      // Get order details with restaurant info
       const [orderDetails] = await db.execute(
         `SELECT o.*, r.name as restaurant_name, r.address as restaurant_address, 
                 r.lat as restaurant_lat, r.lng as restaurant_lng, r.phone as restaurant_phone,
@@ -62,24 +107,21 @@ module.exports = (db, io) => {
         [orderId]
       );
 
-      const fullOrder = orderDetails[0];
+      const fullOrder = orderDetails[0] || order;
 
-      // Log tracking event
       await db.execute(
         "INSERT INTO order_tracking_events (order_id, event_type, event_data) VALUES (?, ?, ?)",
-        [orderId, "agent_assigned", JSON.stringify({ agent_id, agent_name: agentData.name })]
+        [orderId, TRACKING_STATUS.ACCEPTED, JSON.stringify({ agent_id, agent_name: agentData.name })]
       );
 
-      // Broadcast to user's tracking page
       io.emit(`order_${orderId}_update`, {
-        type: "agent_assigned",
+        type: TRACKING_STATUS.ACCEPTED,
         order_id: orderId,
         agent: agentData,
         order: fullOrder,
         timestamp: new Date().toISOString()
       });
 
-      // Broadcast to agent
       io.emit(`agent_${agent_id}_order`, {
         type: "order_accepted",
         order: fullOrder
@@ -92,6 +134,9 @@ module.exports = (db, io) => {
         agent: agentData
       });
     } catch (err) {
+      if (err instanceof AssignmentError) {
+        return res.status(err.statusCode || 400).json({ error: err.message, code: err.code });
+      }
       console.error("Accept order error:", err);
       res.status(500).json({ error: "Failed to accept order", details: err.message });
     }
@@ -104,26 +149,44 @@ module.exports = (db, io) => {
     const { orderId } = req.params;
     const { tracking_status, agent_id, latitude, longitude } = req.body;
 
-    try {
-      const validStatuses = [
-        'agent_going_to_restaurant',
-        'arrived_at_restaurant',
-        'picked_up',
-        'in_transit',
-        'delivered'
-      ];
+    const normalizedTracking = normalizeTrackingStatus(tracking_status);
 
-      if (!validStatuses.includes(tracking_status)) {
-        return res.status(400).json({ error: "Invalid tracking status" });
+    try {
+      if (!normalizedTracking) {
+        return res.status(400).json({ error: "Invalid tracking status", allowed_statuses: TRACKING_STATUS_VALUES });
       }
 
       let updateQuery = "UPDATE orders SET tracking_status = ?";
-      let params = [tracking_status];
+      let params = [normalizedTracking];
 
-      if (tracking_status === 'picked_up') {
-        updateQuery += ", picked_up_at = NOW(), status = 'Picked Up'";
-      } else if (tracking_status === 'delivered') {
-        updateQuery += ", delivered_at = NOW(), status = 'Delivered'";
+      switch (normalizedTracking) {
+        case TRACKING_STATUS.ACCEPTED:
+          updateQuery += ", agent_assigned_at = NOW(), status = ?";
+          params.push(ORDER_STATUS.AGENT_ASSIGNED);
+          break;
+        case TRACKING_STATUS.GOING_TO_RESTAURANT:
+        case TRACKING_STATUS.ARRIVED:
+          updateQuery += ", status = ?";
+          params.push(ORDER_STATUS.CONFIRMED);
+          break;
+        case TRACKING_STATUS.PICKED_UP:
+          updateQuery += ", picked_up_at = NOW(), status = ?";
+          params.push(ORDER_STATUS.PICKED_UP);
+          break;
+        case TRACKING_STATUS.IN_TRANSIT:
+          updateQuery += ", status = ?";
+          params.push(ORDER_STATUS.PICKED_UP);
+          break;
+        case TRACKING_STATUS.DELIVERED:
+          updateQuery += ", delivered_at = NOW(), status = ?";
+          params.push(ORDER_STATUS.DELIVERED);
+          break;
+        case TRACKING_STATUS.CANCELLED:
+          updateQuery += ", status = ?";
+          params.push(ORDER_STATUS.CANCELLED);
+          break;
+        default:
+          break;
       }
 
       updateQuery += " WHERE id = ?";
@@ -134,17 +197,17 @@ module.exports = (db, io) => {
       // Log event
       await db.execute(
         "INSERT INTO order_tracking_events (order_id, event_type, event_data, latitude, longitude) VALUES (?, ?, ?, ?, ?)",
-        [orderId, tracking_status, JSON.stringify({ agent_id }), latitude, longitude]
+        [orderId, normalizedTracking, JSON.stringify({ agent_id }), latitude, longitude]
       );
 
       // Broadcast status change
       io.emit(`order_${orderId}_update`, {
         type: "status_change",
-        tracking_status,
+        tracking_status: normalizedTracking,
         timestamp: new Date().toISOString()
       });
 
-      res.json({ success: true, tracking_status });
+      res.json({ success: true, tracking_status: normalizedTracking });
     } catch (err) {
       console.error("Status update error:", err);
       res.status(500).json({ error: "Failed to update status" });
@@ -179,10 +242,12 @@ module.exports = (db, io) => {
       // Unassign agent and revert status to Pending
       await db.execute(
         `UPDATE orders 
-         SET agent_id = NULL, status = 'Pending', tracking_status = 'waiting' 
+         SET agent_id = NULL, status = ?, tracking_status = ? 
          WHERE id = ?`,
-        [orderId]
+        [ORDER_STATUS.WAITING_AGENT, TRACKING_STATUS.PENDING, orderId]
       );
+
+      await db.execute("UPDATE agents SET is_busy = 0 WHERE id = ?", [agent_id]);
 
       // Log tracking event
       await db.execute(
@@ -415,7 +480,7 @@ module.exports = (db, io) => {
       if (!rows || !rows.length) return res.status(404).json({ error: "Order not found" });
       const order = rows[0];
       if (Number(order.agent_id) !== Number(agent_id)) return res.status(403).json({ error: "Agent mismatch" });
-      if (order.status !== 'Delivered') return res.status(400).json({ error: "Order not delivered yet" });
+      if (order.status !== ORDER_STATUS.DELIVERED) return res.status(400).json({ error: "Order not delivered yet" });
 
       await db.execute(
         "INSERT INTO agent_ratings (agent_id, order_id, rating, feedback) VALUES (?, ?, ?, ?)",

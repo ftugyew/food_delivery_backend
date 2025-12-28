@@ -1,36 +1,130 @@
 const express = require("express");
 const db = require("../db");
+const {
+  ORDER_STATUS,
+  TRACKING_STATUS,
+  ORDER_STATUS_VALUES,
+  TRACKING_STATUS_VALUES
+} = require("../constants/statuses");
 const router = express.Router();
 
 module.exports = (io) => {
+  const normalizeOrderStatus = (value) => {
+    if (!value) return null;
+    const raw = String(value).trim();
+    const lower = raw.toLowerCase();
+    switch (lower) {
+      case 'pending':
+        return ORDER_STATUS.PENDING;
+      case 'waiting':
+      case 'waiting_for_agent':
+      case 'waiting for agent':
+        return ORDER_STATUS.WAITING_AGENT;
+      case 'assigned':
+      case 'agent assigned':
+      case 'agent_assigned':
+        return ORDER_STATUS.AGENT_ASSIGNED;
+      case 'confirmed':
+        return ORDER_STATUS.CONFIRMED;
+      case 'preparing':
+        return ORDER_STATUS.PREPARING;
+      case 'ready':
+        return ORDER_STATUS.READY;
+      case 'picked':
+      case 'picked up':
+      case 'picked_up':
+        return ORDER_STATUS.PICKED_UP;
+      case 'delivered':
+        return ORDER_STATUS.DELIVERED;
+      case 'cancelled':
+      case 'canceled':
+        return ORDER_STATUS.CANCELLED;
+      default:
+        return ORDER_STATUS_VALUES.includes(raw) ? raw : null;
+    }
+  };
+
+  const normalizeTrackingStatus = (value) => {
+    if (!value) return null;
+    const raw = String(value).trim();
+    const lower = raw.toLowerCase();
+    switch (lower) {
+      case 'pending':
+      case 'waiting':
+        return TRACKING_STATUS.PENDING;
+      case 'accepted':
+      case 'agent_assigned':
+        return TRACKING_STATUS.ACCEPTED;
+      case 'agent_going_to_restaurant':
+        return TRACKING_STATUS.GOING_TO_RESTAURANT;
+      case 'arrived_at_restaurant':
+        return TRACKING_STATUS.ARRIVED;
+      case 'picked up':
+      case 'picked_up':
+        return TRACKING_STATUS.PICKED_UP;
+      case 'in_transit':
+        return TRACKING_STATUS.IN_TRANSIT;
+      case 'delivered':
+        return TRACKING_STATUS.DELIVERED;
+      case 'cancelled':
+      case 'canceled':
+        return TRACKING_STATUS.CANCELLED;
+      default:
+        return TRACKING_STATUS_VALUES.includes(raw) ? raw : null;
+    }
+  };
+
   // Earnings tracker for agent
-  router.get('/:agent_id/earnings', (req, res) => {
-    const { agent_id } = req.params;
-    db.query('SELECT SUM(total) as total_earnings, COUNT(*) as total_orders FROM orders WHERE agent_id=? AND status="Delivered"', [agent_id], (err, result) => {
-      if (err) return res.status(500).json({ error: 'Failed to fetch earnings' });
-      db.query('SELECT id, total, DATE(created_at) as date FROM orders WHERE agent_id=? AND status="Delivered" ORDER BY created_at DESC', [agent_id], (err2, orders) => {
-        if (err2) return res.status(500).json({ error: 'Failed to fetch order earnings' });
-        res.json({ summary: result[0], orders });
-      });
-    });
+  router.get('/:agent_id/earnings', async (req, res) => {
+    try {
+      const { agent_id } = req.params;
+      const [summaryRows] = await db.execute(
+        'SELECT SUM(total) as total_earnings, COUNT(*) as total_orders FROM orders WHERE agent_id = ? AND status = ?',
+        [agent_id, ORDER_STATUS.DELIVERED]
+      );
+      const [orders] = await db.execute(
+        'SELECT id, total, DATE(created_at) as date FROM orders WHERE agent_id = ? AND status = ? ORDER BY created_at DESC',
+        [agent_id, ORDER_STATUS.DELIVERED]
+      );
+
+      res.json({ summary: summaryRows[0] || { total_earnings: 0, total_orders: 0 }, orders });
+    } catch (err) {
+      console.error('Failed to fetch earnings:', err);
+      res.status(500).json({ error: 'Failed to fetch earnings' });
+    }
   });
 
   // Delivery history for agent
-  router.get('/:agent_id/history', (req, res) => {
-    const { agent_id } = req.params;
-    db.query('SELECT * FROM orders WHERE agent_id=? AND status="Delivered" ORDER BY delivered_at DESC', [agent_id], (err, orders) => {
-      if (err) return res.status(500).json({ error: 'Failed to fetch history' });
+  router.get('/:agent_id/history', async (req, res) => {
+    try {
+      const { agent_id } = req.params;
+      const [orders] = await db.execute(
+        'SELECT * FROM orders WHERE agent_id = ? AND status = ? ORDER BY delivered_at DESC',
+        [agent_id, ORDER_STATUS.DELIVERED]
+      );
       res.json(orders);
-    });
+    } catch (err) {
+      console.error('Failed to fetch history:', err);
+      res.status(500).json({ error: 'Failed to fetch history' });
+    }
   });
 
   // Proof of delivery (photo/signature)
-  router.post('/proof', (req, res) => {
-    const { order_id, agent_id, proof_type, proof_data } = req.body;
-    db.query('INSERT INTO delivery_proofs (order_id, agent_id, proof_type, proof_data) VALUES (?, ?, ?, ?)', [order_id, agent_id, proof_type, proof_data], (err) => {
-      if (err) return res.status(500).json({ error: 'Failed to save proof' });
+  router.post('/proof', async (req, res) => {
+    try {
+      const { order_id, agent_id, proof_type, proof_data } = req.body;
+      if (!order_id || !agent_id || !proof_type || !proof_data) {
+        return res.status(400).json({ error: 'order_id, agent_id, proof_type, and proof_data are required' });
+      }
+      await db.execute(
+        'INSERT INTO delivery_proofs (order_id, agent_id, proof_type, proof_data) VALUES (?, ?, ?, ?)',
+        [order_id, agent_id, proof_type, proof_data]
+      );
       res.json({ message: '✅ Proof saved' });
-    });
+    } catch (err) {
+      console.error('Failed to save proof:', err);
+      res.status(500).json({ error: 'Failed to save proof' });
+    }
   });
 
   // Break/Offline mode
@@ -166,8 +260,8 @@ module.exports = (io) => {
       try {
         // Get active orders for this agent
         const [orders] = await db.execute(
-          "SELECT id FROM orders WHERE agent_id = ? AND status NOT IN ('Delivered', 'Cancelled') LIMIT 1",
-          [agent_id]
+          "SELECT id FROM orders WHERE agent_id = ? AND status NOT IN (?, ?) LIMIT 1",
+          [agent_id, ORDER_STATUS.DELIVERED, ORDER_STATUS.CANCELLED]
         );
         
         const orderId = orders.length > 0 ? orders[0].id : null;
@@ -183,8 +277,8 @@ module.exports = (io) => {
 
       // Get all active orders for this agent
       const [activeOrders] = await db.execute(
-        "SELECT id FROM orders WHERE agent_id = ? AND status NOT IN ('Delivered', 'Cancelled')",
-        [agent_id]
+        "SELECT id FROM orders WHERE agent_id = ? AND status NOT IN (?, ?)",
+        [agent_id, ORDER_STATUS.DELIVERED, ORDER_STATUS.CANCELLED]
       );
 
       // Emit location update for each active order
@@ -241,22 +335,31 @@ module.exports = (io) => {
       // Show two categories:
       // 1. Orders assigned to this agent (agent_assigned, Confirmed, Preparing, Ready, Picked Up)
       // 2. Available orders (waiting_for_agent) if agent is online
-      
+      const activeStatuses = [
+        ORDER_STATUS.AGENT_ASSIGNED,
+        ORDER_STATUS.CONFIRMED,
+        ORDER_STATUS.PREPARING,
+        ORDER_STATUS.READY,
+        ORDER_STATUS.PICKED_UP
+      ];
+      const activePlaceholders = activeStatuses.map(() => '?').join(', ');
+
       const [assignedOrders] = await db.execute(
         `SELECT o.*, r.name as restaurant_name, r.lat as restaurant_lat, r.lng as restaurant_lng
          FROM orders o
          LEFT JOIN restaurants r ON o.restaurant_id = r.id
-         WHERE o.agent_id = ? AND o.status IN ('agent_assigned', 'Confirmed', 'Preparing', 'Ready', 'Picked Up')
+         WHERE o.agent_id = ? AND o.status IN (${activePlaceholders})
          ORDER BY o.created_at DESC`,
-        [agent_id]
+        [agent_id, ...activeStatuses]
       );
 
       const [availableOrders] = await db.execute(
         `SELECT o.*, r.name as restaurant_name, r.lat as restaurant_lat, r.lng as restaurant_lng
          FROM orders o
          LEFT JOIN restaurants r ON o.restaurant_id = r.id
-         WHERE o.status = 'waiting_for_agent' AND o.agent_id IS NULL
-         ORDER BY o.created_at ASC`
+         WHERE o.status = ? AND o.agent_id IS NULL
+         ORDER BY o.created_at ASC`,
+        [ORDER_STATUS.WAITING_AGENT]
       );
 
       console.log(`  📋 Found ${assignedOrders.length} assigned orders and ${availableOrders.length} available orders`);
@@ -284,11 +387,31 @@ module.exports = (io) => {
   });
 
   // Update order status
-  router.post("/update-order", (req, res) => {
+  router.post("/update-order", async (req, res) => {
     const { order_id, status } = req.body;
-    db.query("UPDATE orders SET status=? WHERE id=?", [status, order_id]);
-    io.emit("orderUpdate", { order_id, status });
-    res.json({ message: "✅ Order updated" });
+    const normalizedStatus = normalizeOrderStatus(status);
+
+    if (!order_id || !normalizedStatus) {
+      return res.status(400).json({ error: "Invalid order_id or status", allowed_statuses: ORDER_STATUS_VALUES });
+    }
+
+    try {
+      const setClauses = ["status = ?"];
+      const params = [normalizedStatus];
+
+      if (normalizedStatus === ORDER_STATUS.WAITING_AGENT) {
+        setClauses.push("tracking_status = ?");
+        params.push(TRACKING_STATUS.PENDING);
+      }
+
+      await db.execute(`UPDATE orders SET ${setClauses.join(", ")} WHERE id = ?`, [...params, order_id]);
+
+      io.emit("orderUpdate", { order_id, status: normalizedStatus });
+      res.json({ message: "✅ Order updated", status: normalizedStatus });
+    } catch (err) {
+      console.error("Failed to update order:", err);
+      res.status(500).json({ error: "Failed to update order" });
+    }
   });
 
   return router;

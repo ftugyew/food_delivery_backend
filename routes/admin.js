@@ -3,6 +3,7 @@ const db = require("../db");
 const multer = require("multer");
 const path = require("path");
 const { bannerUpload } = require("../config/multer");
+const { ORDER_STATUS, TRACKING_STATUS } = require("../constants/statuses");
 const router = express.Router();
 
 // ================= USERS =================
@@ -135,11 +136,11 @@ router.post("/orders/:orderId/assign", async (req, res) => {
     }
     
     // Check if order is in correct status
-    if (order.status !== 'waiting_for_agent') {
+    if (order.status !== ORDER_STATUS.WAITING_AGENT) {
       await connection.rollback();
       return res.status(400).json({
         success: false,
-        error: `Order status is '${order.status}', must be 'waiting_for_agent'`,
+        error: `Order status is '${order.status}', must be '${ORDER_STATUS.WAITING_AGENT}'`,
         orderId,
         currentStatus: order.status
       });
@@ -247,7 +248,7 @@ router.post("/orders/:orderId/assign", async (req, res) => {
     
     // 5. Update agent: set is_busy = 1
     await connection.execute(
-      "UPDATE agents SET is_busy = 1, status = 'Busy' WHERE id = ?",
+      "UPDATE agents SET is_busy = 1 WHERE id = ?",
       [agent.id]
     );
     
@@ -255,7 +256,7 @@ router.post("/orders/:orderId/assign", async (req, res) => {
     
     // 6. Update order: assign agent, change status to agent_assigned
     await connection.execute(
-      "UPDATE orders SET agent_id = ?, status = 'agent_assigned', tracking_status = 'accepted' WHERE id = ?",
+      `UPDATE orders SET agent_id = ?, status = '${ORDER_STATUS.AGENT_ASSIGNED}', tracking_status = '${TRACKING_STATUS.ACCEPTED}' WHERE id = ?`,
       [agent.id, orderId]
     );
     
