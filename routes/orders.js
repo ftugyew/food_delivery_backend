@@ -225,32 +225,29 @@ module.exports = (io) => {
         delivery_lat,
         delivery_lng,
         delivery_address,
+        items,
+        total,
+        order_id,
+        payment_type,
+        estimated_delivery,
         status,
         tracking_status
-      ) VALUES (?, ?, ?, ?, ?, 'waiting_for_agent', 'waiting')`;
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting_for_agent', 'waiting')`;
 
       const [insertResult] = await connection.execute(baseInsertSql, [
         userId,
         restaurantId,
         snapLat,
         snapLng,
-        snapAddress
-      ]);
-
-      const orderDbId = insertResult.insertId;
-      const finalizeSql = `UPDATE orders
-        SET items = ?, total = ?, agent_id = NULL, order_id = ?, payment_type = ?, estimated_delivery = ?, status = ?, tracking_status = ?
-        WHERE id = ?`;
-      await connection.execute(finalizeSql, [
+        snapAddress,
         itemsJson,
         totalVal,
         uniqueOrderId,
         paymentType,
-        etaStr,
-        ORDER_STATUS.WAITING_AGENT,
-        TRACKING_STATUS.WAITING,
-        orderDbId
+        etaStr
       ]);
+
+      const orderDbId = insertResult.insertId;
 
       await connection.commit();
 
@@ -263,7 +260,7 @@ module.exports = (io) => {
         total: totalVal,
         agent_id: null,
         status: ORDER_STATUS.WAITING_AGENT,
-        tracking_status: TRACKING_STATUS.PENDING,
+        tracking_status: TRACKING_STATUS.WAITING,
         payment_type: paymentType,
         estimated_delivery: etaStr,
         delivery_address: snapAddress,
