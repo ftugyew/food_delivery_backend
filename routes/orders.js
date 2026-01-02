@@ -177,10 +177,20 @@ module.exports = (io) => {
 
     const userId = toNum(req.body.user_id);
     const restaurantId = toNum(req.body.restaurant_id);
-    const itemsJson = toJsonStr(req.body.items, "[]");
     const totalVal = toNum(req.body.total);
-    const paymentType = toStr(req.body.payment_type);
-    const etaStr = toStr(req.body.estimated_delivery);
+    const paymentType = toStr(req.body.payment_type) || 'COD';
+    const etaStr = toStr(req.body.estimated_delivery) || '30-35 mins';
+
+    // ⭐ CRITICAL: Validate items BEFORE processing
+    const items = req.body.items;
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ 
+        error: "Order items missing",
+        message: "Items array is required and must not be empty"
+      });
+    }
+
+    const itemsJson = toJsonStr(items);
 
     if (userId == null || restaurantId == null || totalVal == null) {
       return res.status(400).json({ error: "Missing required fields: user_id, restaurant_id, total" });
@@ -219,6 +229,16 @@ module.exports = (io) => {
       }
       if (!uniqueOrderId) uniqueOrderId = Date.now().toString().padStart(12, "0").slice(-12);
 
+      console.log('📦 Creating order with data:', {
+        userId,
+        restaurantId,
+        itemsJson: itemsJson.substring(0, 100) + '...',
+        totalVal,
+        paymentType,
+        etaStr,
+        delivery: { lat: snapLat, lng: snapLng, address: snapAddress }
+      });
+
       const baseInsertSql = `INSERT INTO orders (
         user_id,
         restaurant_id,
@@ -246,6 +266,8 @@ module.exports = (io) => {
         paymentType,
         etaStr
       ]);
+
+      console.log('✅ Order inserted successfully with ID:', insertResult.insertId);
 
       const orderDbId = insertResult.insertId;
 
