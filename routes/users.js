@@ -3,6 +3,69 @@ const router = express.Router();
 const db = require('../db');
 
 /**
+ * POST /api/users/location-public (NO AUTH - EMERGENCY ENDPOINT)
+ * 
+ * Temporary public endpoint for testing/emergency location updates
+ * TODO: Remove after fixing authentication issues
+ */
+router.post('/location-public', async (req, res) => {
+  const { user_id, lat, lng, address } = req.body;
+
+  if (!user_id || !lat || !lng) {
+    return res.status(400).json({ 
+      error: 'Missing required fields',
+      message: 'user_id, lat, and lng are required'
+    });
+  }
+
+  const latitude = Number(lat);
+  const longitude = Number(lng);
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return res.status(400).json({ 
+      error: 'Invalid coordinates',
+      message: 'lat and lng must be valid numbers'
+    });
+  }
+
+  try {
+    const updateQuery = `
+      UPDATE users
+      SET lat = ?,
+          lng = ?,
+          address = ?
+      WHERE id = ?
+    `;
+
+    const [result] = await db.execute(updateQuery, [latitude, longitude, address || null, user_id]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ 
+        error: 'User not found',
+        message: `No user found with id ${user_id}`
+      });
+    }
+
+    console.log(`✅ Location updated for user ${user_id}: (${latitude}, ${longitude})`);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Location saved successfully',
+      user_id: user_id,
+      location: { lat: latitude, lng: longitude, address }
+    });
+
+  } catch (error) {
+    console.error('❌ Error updating location:', error);
+    return res.status(500).json({ 
+      error: 'Database error',
+      message: 'Failed to save location',
+      details: error.message
+    });
+  }
+});
+
+/**
  * POST /api/users/location
  * 
  * Update user's delivery location (lat, lng, address) in users table

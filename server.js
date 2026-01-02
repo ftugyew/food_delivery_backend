@@ -181,6 +181,15 @@ try {
   console.warn("⚠️  Tracking routes not loaded:", err.message);
 }
 try { app.use("/api/user-addresses", authMiddleware, require("./routes/user-addresses")); } catch (_) {}
+
+// Emergency public endpoint for location updates (no auth required)
+try { 
+  const usersRouterPublic = require("./routes/users");
+  app.use("/api/users-public", usersRouterPublic);
+} catch (err) {
+  console.warn("⚠️  Public users route not loaded:", err.message);
+}
+
 try { app.use("/api/users", authMiddleware, require("./routes/users")); } catch (_) {}
 try { app.use("/api/delivery", authMiddleware, require("./routes/delivery")); } catch (_) {}
 if (typeof authMiddleware !== "function") {
