@@ -227,7 +227,7 @@ module.exports = (io) => {
         delivery_address,
         status,
         tracking_status
-      ) VALUES (?, ?, ?, ?, ?, 'waiting_for_agent', 'pending')`;
+      ) VALUES (?, ?, ?, ?, ?, 'waiting_for_agent', 'waiting')`;
 
       const [insertResult] = await connection.execute(baseInsertSql, [
         userId,
@@ -248,7 +248,7 @@ module.exports = (io) => {
         paymentType,
         etaStr,
         ORDER_STATUS.WAITING_AGENT,
-        TRACKING_STATUS.PENDING,
+        TRACKING_STATUS.WAITING,
         orderDbId
       ]);
 

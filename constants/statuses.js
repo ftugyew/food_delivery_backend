@@ -11,8 +11,10 @@ const ORDER_STATUS = {
 };
 
 const TRACKING_STATUS = {
-  PENDING: 'pending',
+  WAITING: 'waiting',
+  PENDING: 'waiting',
   ACCEPTED: 'accepted',
+  AGENT_ASSIGNED: 'agent_assigned',
   GOING_TO_RESTAURANT: 'agent_going_to_restaurant',
   ARRIVED: 'arrived_at_restaurant',
   PICKED_UP: 'picked_up',
