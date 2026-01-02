@@ -9,8 +9,42 @@ const {
 const { assignAgentToOrder, AssignmentError } = require("../services/order-assignment");
 const router = express.Router();
 
+const assertNoLegacyOrderFields = (sql = "") => {
+  const lower = String(sql).toLowerCase();
+  if (!lower.includes("orders")) return;
+  const forbidden = [
+    "orders (lat",
+    "orders (lng",
+    "orders (address",
+    "orders.lat",
+    "orders.lng",
+    "orders.address",
+    "orders set lat",
+    "orders set lng",
+    "orders set address"
+  ];
+  const hit = forbidden.find((f) => lower.includes(f));
+  if (hit) {
+    const err = new Error(`Unsafe orders column usage detected: ${hit}`);
+    err.code = "ORDERS_LEGACY_FIELDS";
+    throw err;
+  }
+};
+
+const wrapExecuteWithGuard = (fn) => {
+  return function guardedExecute(sql, params) {
+    assertNoLegacyOrderFields(sql);
+    return fn.call(this, sql, params);
+  };
+};
+
 // Pass io for sockets
 module.exports = (io) => {
+  // Global guard on pool-level execute
+  if (typeof db.execute === "function" && !db.__ordersGuarded) {
+    db.execute = wrapExecuteWithGuard(db.execute.bind(db));
+    db.__ordersGuarded = true;
+  }
   // Configurable assignment settings via environment
   const ASSIGN_MAX_KM = Number(process.env.ASSIGN_MAX_KM) || 10;
   const DEFAULT_ASSIGN_LOAD_STATUSES = [
@@ -153,6 +187,7 @@ module.exports = (io) => {
     }
 
     const connection = await db.getConnection();
+    connection.execute = wrapExecuteWithGuard(connection.execute.bind(connection));
     try {
       await connection.beginTransaction();
 
@@ -184,52 +219,43 @@ module.exports = (io) => {
       }
       if (!uniqueOrderId) uniqueOrderId = Date.now().toString().padStart(12, "0").slice(-12);
 
-      let insertSql = `INSERT INTO orders 
-        (user_id, restaurant_id, items, total, agent_id, status, tracking_status, order_id, payment_type, estimated_delivery, delivery_address, delivery_lat, delivery_lng)
-        VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`;
-      let params = [
+      const baseInsertSql = `INSERT INTO orders (
+        user_id,
+        restaurant_id,
+        delivery_lat,
+        delivery_lng,
+        delivery_address,
+        status,
+        tracking_status
+      ) VALUES (?, ?, ?, ?, ?, 'waiting_for_agent', 'pending')`;
+
+      const [insertResult] = await connection.execute(baseInsertSql, [
         userId,
         restaurantId,
+        snapLat,
+        snapLng,
+        snapAddress
+      ]);
+
+      const orderDbId = insertResult.insertId;
+      const finalizeSql = `UPDATE orders
+        SET items = ?, total = ?, agent_id = NULL, order_id = ?, payment_type = ?, estimated_delivery = ?, status = ?, tracking_status = ?
+        WHERE id = ?`;
+      await connection.execute(finalizeSql, [
         itemsJson,
         totalVal,
-        ORDER_STATUS.WAITING_AGENT,
-        TRACKING_STATUS.PENDING,
         uniqueOrderId,
         paymentType,
         etaStr,
-        snapAddress,
-        snapLat,
-        snapLng
-      ];
-
-      let result;
-      try {
-        [result] = await connection.execute(insertSql, params);
-      } catch (e) {
-        console.warn("Primary INSERT failed, attempting fallback:", e.message);
-        insertSql = `INSERT INTO orders 
-          (user_id, restaurant_id, items, total, agent_id, status, order_id, payment_type, estimated_delivery, delivery_address, delivery_lat, delivery_lng)
-          VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`;
-        params = [
-          userId,
-          restaurantId,
-          itemsJson,
-          totalVal,
-          ORDER_STATUS.WAITING_AGENT,
-          uniqueOrderId,
-          paymentType,
-          etaStr,
-          snapAddress,
-          snapLat,
-          snapLng
-        ];
-        [result] = await connection.execute(insertSql, params);
-      }
+        ORDER_STATUS.WAITING_AGENT,
+        TRACKING_STATUS.PENDING,
+        orderDbId
+      ]);
 
       await connection.commit();
 
       const newOrder = {
-        id: result.insertId,
+        id: orderDbId,
         order_id: uniqueOrderId,
         user_id: userId,
         restaurant_id: restaurantId,
@@ -540,6 +566,7 @@ module.exports = (io) => {
   // ===== Create Order (used by frontend success page) =====
   router.post("/new", async (req, res) => {
     const connection = await db.getConnection();
+    connection.execute = wrapExecuteWithGuard(connection.execute.bind(connection));
     try {
       await connection.beginTransaction();
 
@@ -607,47 +634,39 @@ module.exports = (io) => {
       const statusValue = assignedAgentId ? ORDER_STATUS.AGENT_ASSIGNED : ORDER_STATUS.WAITING_AGENT;
       const trackingValue = assignedAgentId ? TRACKING_STATUS.ACCEPTED : TRACKING_STATUS.PENDING;
 
-      let insertNewSql = `INSERT INTO orders 
-         (user_id, restaurant_id, items, total, delivery_address, delivery_lat, delivery_lng, payment_type, status, tracking_status, created_at, order_id, agent_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`;
-      let insertParams = [
+      const baseInsertSql = `INSERT INTO orders (
+        user_id,
+        restaurant_id,
+        delivery_lat,
+        delivery_lng,
+        delivery_address,
+        status,
+        tracking_status
+      ) VALUES (?, ?, ?, ?, ?, 'waiting_for_agent', 'pending')`;
+
+      const [insertResult] = await connection.execute(baseInsertSql, [
         uid,
         rid,
-        JSON.stringify(items || []),
-        totalVal,
-        snapAddress,
         snapLat,
         snapLng,
+        snapAddress
+      ]);
+
+      const orderDbId = insertResult.insertId;
+
+      const finalizeSql = `UPDATE orders
+        SET items = ?, total = ?, payment_type = ?, order_id = ?, agent_id = ?, status = ?, tracking_status = ?
+        WHERE id = ?`;
+      await connection.execute(finalizeSql, [
+        JSON.stringify(items || []),
+        totalVal,
         payType,
+        orderCode,
+        assignedAgentId,
         statusValue,
         trackingValue,
-        orderCode,
-        assignedAgentId
-      ];
-
-      let result;
-      try {
-        [result] = await connection.execute(insertNewSql, insertParams);
-      } catch (err) {
-        console.warn("Primary /new insert failed, fallback without tracking_status:", err.message);
-        insertNewSql = `INSERT INTO orders 
-         (user_id, restaurant_id, items, total, delivery_address, delivery_lat, delivery_lng, payment_type, status, created_at, order_id, agent_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`;
-        insertParams = [
-          uid,
-          rid,
-          JSON.stringify(items || []),
-          totalVal,
-          snapAddress,
-          snapLat,
-          snapLng,
-          payType,
-          statusValue,
-          orderCode,
-          assignedAgentId
-        ];
-        [result] = await connection.execute(insertNewSql, insertParams);
-      }
+        orderDbId
+      ]);
 
       if (assignedAgentId) {
         try {
@@ -658,10 +677,10 @@ module.exports = (io) => {
       }
 
       await connection.commit();
-      console.log('DB insert result:', result);
+      console.log('DB insert result:', insertResult);
 
       const payload = {
-        id: result.insertId,
+        id: orderDbId,
         user_id: uid,
         restaurant_id: rid,
         items,
@@ -677,7 +696,7 @@ module.exports = (io) => {
       };
       // Debug logs: confirm the server is emitting socket events for new orders
       try {
-        console.log('📡 Emitting socket events for new order:', { orderId: result.insertId, agent_id: assignedAgentId, restaurant_id: rid });
+        console.log('📡 Emitting socket events for new order:', { orderId: orderDbId, agent_id: assignedAgentId, restaurant_id: rid });
         
         // Emit to all connected users/admins
         io.emit("newOrder", payload);
