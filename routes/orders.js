@@ -539,20 +539,42 @@ module.exports = (io) => {
   });
   // ===== Create Order (used by frontend success page) =====
   router.post("/new", async (req, res) => {
+    const connection = await db.getConnection();
     try {
-      const { user_id, restaurant_id, items, total_price, address, lat, lng, payment_method } = req.body;
+      await connection.beginTransaction();
+
+      const { user_id, restaurant_id, items, total_price, payment_method } = req.body;
 
       if (!user_id || !restaurant_id || !items || !total_price) {
+        await connection.rollback();
         return res.status(400).json({ error: "Missing required order details" });
       }
 
       const uid = Number(user_id);
       const rid = Number(restaurant_id);
       const totalVal = Number(total_price);
-      const safeAddress = typeof address === 'string' ? address : '';
-      const latVal = isFinite(Number(lat)) ? Number(lat) : null;
-      const lngVal = isFinite(Number(lng)) ? Number(lng) : null;
       const payType = payment_method || null;
+
+      // Snapshot delivery data from users table
+      const [userRows] = await connection.execute(
+        "SELECT lat, lng, address FROM users WHERE id = ? LIMIT 1",
+        [uid]
+      );
+
+      if (!userRows || userRows.length === 0) {
+        await connection.rollback();
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const user = userRows[0];
+      const snapLat = user.lat != null ? Number(user.lat) : null;
+      const snapLng = user.lng != null ? Number(user.lng) : null;
+      const snapAddress = user.address != null ? user.address : null;
+
+      if (!Number.isFinite(snapLat) || !Number.isFinite(snapLng)) {
+        await connection.rollback();
+        return res.status(400).json({ error: "Delivery location missing" });
+      }
 
       const pad = (n) => (n < 10 ? `0${n}` : `${n}`);
       const d = new Date();
@@ -565,7 +587,7 @@ module.exports = (io) => {
       try {
         // Get restaurant coordinates (support legacy and full column names)
         let rlat = null, rlng = null;
-        const [rrows] = await db.execute(
+        const [rrows] = await connection.execute(
           "SELECT COALESCE(lat, latitude) AS lat, COALESCE(lng, longitude) AS lng FROM restaurants WHERE id = ? LIMIT 1",
           [rid]
         );
@@ -577,12 +599,12 @@ module.exports = (io) => {
         }
         // Fallback to any Active
         if (!assignedAgentId) {
-          const [agents] = await db.execute("SELECT id FROM agents WHERE status='Active' ORDER BY id ASC LIMIT 1");
+          const [agents] = await connection.execute("SELECT id FROM agents WHERE status='Active' ORDER BY id ASC LIMIT 1");
           if (agents && agents.length) assignedAgentId = agents[0].id;
         }
       } catch (_) { /* ignore */ }
 
-      const statusValue = assignedAgentId ? ORDER_STATUS.AGENT_ASSIGNED : ORDER_STATUS.PENDING;
+      const statusValue = assignedAgentId ? ORDER_STATUS.AGENT_ASSIGNED : ORDER_STATUS.WAITING_AGENT;
       const trackingValue = assignedAgentId ? TRACKING_STATUS.ACCEPTED : TRACKING_STATUS.PENDING;
 
       let insertNewSql = `INSERT INTO orders 
@@ -593,9 +615,9 @@ module.exports = (io) => {
         rid,
         JSON.stringify(items || []),
         totalVal,
-        safeAddress,
-        latVal,
-        lngVal,
+        snapAddress,
+        snapLat,
+        snapLng,
         payType,
         statusValue,
         trackingValue,
@@ -605,7 +627,7 @@ module.exports = (io) => {
 
       let result;
       try {
-        [result] = await db.execute(insertNewSql, insertParams);
+        [result] = await connection.execute(insertNewSql, insertParams);
       } catch (err) {
         console.warn("Primary /new insert failed, fallback without tracking_status:", err.message);
         insertNewSql = `INSERT INTO orders 
@@ -616,27 +638,27 @@ module.exports = (io) => {
           rid,
           JSON.stringify(items || []),
           totalVal,
-          safeAddress,
-          latVal,
-          lngVal,
+          snapAddress,
+          snapLat,
+          snapLng,
           payType,
           statusValue,
           orderCode,
           assignedAgentId
         ];
-        [result] = await db.execute(insertNewSql, insertParams);
+        [result] = await connection.execute(insertNewSql, insertParams);
       }
 
       if (assignedAgentId) {
         try {
-          await db.execute("UPDATE agents SET is_busy = 1 WHERE id = ?", [assignedAgentId]);
+          await connection.execute("UPDATE agents SET is_busy = 1 WHERE id = ?", [assignedAgentId]);
         } catch (busyErr) {
           console.warn("Failed to mark agent busy for auto-assigned order:", busyErr.message);
         }
       }
-      console.log('DB insert result:', result);
 
-      // assignedAgentId already computed above and inserted with order
+      await connection.commit();
+      console.log('DB insert result:', result);
 
       const payload = {
         id: result.insertId,
@@ -644,9 +666,9 @@ module.exports = (io) => {
         restaurant_id: rid,
         items,
         total_price: totalVal,
-        delivery_address: safeAddress,
-        delivery_lat: latVal,
-        delivery_lng: lngVal,
+        delivery_address: snapAddress,
+        delivery_lat: snapLat,
+        delivery_lng: snapLng,
         payment_method: payType,
         status: statusValue,
         tracking_status: trackingValue,
@@ -682,8 +704,11 @@ module.exports = (io) => {
       return res.status(201).json({ message: "Order created", order: payload });
 
     } catch (err) {
+      try { await connection.rollback(); } catch (_) {}
       console.error("Error creating order (POST /new):", err);
       return res.status(500).json({ error: "Failed to create order", details: err.message });
+    } finally {
+      connection.release();
     }
   });
 
