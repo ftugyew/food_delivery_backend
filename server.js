@@ -181,6 +181,7 @@ try {
   console.warn("⚠️  Tracking routes not loaded:", err.message);
 }
 try { app.use("/api/user-addresses", authMiddleware, require("./routes/user-addresses")); } catch (_) {}
+try { app.use("/api/users", authMiddleware, require("./routes/users")); } catch (_) {}
 try { app.use("/api/delivery", authMiddleware, require("./routes/delivery")); } catch (_) {}
 if (typeof authMiddleware !== "function") {
   authMiddleware = (req, _res, next) => next();
