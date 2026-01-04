@@ -413,6 +413,28 @@ module.exports = (io) => {
     }
   });
 
+  // Alias required by agent dashboard spec
+  router.get("/orders/agent/available", async (req, res) => {
+    try {
+      const [availableOrders] = await db.execute(
+        `SELECT o.*, 
+                r.name as restaurant_name, 
+                r.address as restaurant_address,
+                r.lat as restaurant_lat, 
+                r.lng as restaurant_lng
+         FROM orders o
+         LEFT JOIN restaurants r ON o.restaurant_id = r.id
+         WHERE o.status = ? AND (o.agent_id IS NULL OR o.agent_id = 0)
+         ORDER BY o.created_at ASC
+         LIMIT 50`,
+        [ORDER_STATUS.WAITING_AGENT]
+      );
+      res.json(availableOrders);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch available orders", details: err.message });
+    }
+  });
+
   // Update order status
   router.post("/update-order", async (req, res) => {
     const { order_id, status } = req.body;

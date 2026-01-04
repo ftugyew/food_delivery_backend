@@ -11,6 +11,16 @@ module.exports = (io) => {
   io.on("connection", (socket) => {
     console.log(`🔌 Client connected: ${socket.id}`);
 
+    // ===== REGISTER AGENT (IDENTITY + ROOM JOIN) =====
+    socket.on("register_agent", (agentId) => {
+      if (!agentId) return;
+      socket.agentId = agentId;
+      socket.join("agents");
+      socket.join(`agent_${agentId}`);
+      const count = io.sockets.adapter.rooms.get("agents")?.size || 0;
+      console.log(`🚴 Agent registered: ${agentId} (${socket.id}) | Agents in room: ${count}`);
+    });
+
     // ===== AGENT JOIN =====
     socket.on("join", (data) => {
       const { type, id } = data;

@@ -748,8 +748,8 @@ module.exports = (io) => {
         // NEW: Emit to ALL online agents so they can see available orders
         console.log(`📨 Broadcasting order to all online agents`);
         io.emit("newAvailableOrder", payload);
-          io.to("agents").emit("newAvailableOrder", payload);
-          io.to("agents").emit("new_order_for_agents", payload);
+        io.to("agents").emit("newAvailableOrder", payload);
+        io.to("agents").emit("new_order_for_agents", payload);
         
       } catch (emitErr) {
         console.error('Socket emit failed for new order:', emitErr);
