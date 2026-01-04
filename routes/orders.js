@@ -521,6 +521,21 @@ module.exports = (io) => {
               restaurant_lng: order.restaurant_lng
             });
             
+            // Broadcast to agents room for better delivery
+            io.to("agents").emit("newAvailableOrder", {
+              ...order,
+              restaurant_name: order.restaurant_name,
+              restaurant_lat: order.restaurant_lat,
+              restaurant_lng: order.restaurant_lng
+            });
+            
+            io.to("agents").emit("new_order_for_agents", {
+              ...order,
+              restaurant_name: order.restaurant_name,
+              restaurant_lat: order.restaurant_lat,
+              restaurant_lng: order.restaurant_lng
+            });
+            
             console.log(`✅ Order #${order_id} broadcasted to delivery agents`);
           } else {
             console.log(`⚠️ No online agents available for order #${order_id}`);
@@ -733,6 +748,8 @@ module.exports = (io) => {
         // NEW: Emit to ALL online agents so they can see available orders
         console.log(`📨 Broadcasting order to all online agents`);
         io.emit("newAvailableOrder", payload);
+          io.to("agents").emit("newAvailableOrder", payload);
+          io.to("agents").emit("new_order_for_agents", payload);
         
       } catch (emitErr) {
         console.error('Socket emit failed for new order:', emitErr);

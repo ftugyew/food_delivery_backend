@@ -11,6 +11,26 @@ module.exports = (io) => {
   io.on("connection", (socket) => {
     console.log(`🔌 Client connected: ${socket.id}`);
 
+    // ===== AGENT JOIN =====
+    socket.on("join", (data) => {
+      const { type, id } = data;
+      
+      if (type === "agent" && id) {
+        // Join the agents room for broadcast
+        socket.join("agents");
+        // Also join agent-specific room
+        socket.join(`agent_${id}`);
+        console.log(`🛵 Agent #${id} connected: ${socket.id}`);
+        console.log(`   Joined rooms: agents, agent_${id}`);
+      } else if (type === "restaurant" && id) {
+        socket.join(`restaurant_${id}`);
+        console.log(`🏪 Restaurant #${id} connected: ${socket.id}`);
+      } else if (type === "customer" && id) {
+        socket.join(`customer_${id}`);
+        console.log(`👤 Customer #${id} connected: ${socket.id}`);
+      }
+    });
+
     // ===== AGENT LOCATION UPDATE =====
     socket.on("agent_location_update", async (data) => {
       const { agent_id, order_id, latitude, longitude } = data;

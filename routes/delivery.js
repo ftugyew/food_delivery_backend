@@ -383,6 +383,33 @@ module.exports = (io) => {
       res.json(rows[0]);
     } catch (e) {
       res.status(500).json({ error: "Failed to resolve agent" });
+
+      // Get all available orders (for agent dashboard fallback)
+      router.get("/orders/available", async (req, res) => {
+        try {
+          console.log("📦 Fetching all available orders");
+      
+          const [availableOrders] = await db.execute(
+            `SELECT o.*, 
+                    r.name as restaurant_name, 
+                    r.address as restaurant_address,
+                    r.lat as restaurant_lat, 
+                    r.lng as restaurant_lng
+             FROM orders o
+             LEFT JOIN restaurants r ON o.restaurant_id = r.id
+             WHERE o.status = ? AND (o.agent_id IS NULL OR o.agent_id = 0)
+             ORDER BY o.created_at ASC
+             LIMIT 50`,
+            [ORDER_STATUS.WAITING_AGENT]
+          );
+
+          console.log(`  ✅ Found ${availableOrders.length} available orders`);
+          res.json(availableOrders);
+        } catch (err) {
+          console.error("Failed to fetch available orders:", err);
+          res.status(500).json({ error: "Failed to fetch available orders", details: err.message });
+        }
+      });
     }
   });
 
