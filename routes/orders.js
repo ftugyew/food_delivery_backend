@@ -431,9 +431,9 @@ module.exports = (io) => {
            o.delivery_lng,
            o.delivery_address,
            u.name AS customer_name,
-           u.phone AS customer_phone,
+           o.customer_phone,
            r.name AS restaurant_name,
-           r.phone AS restaurant_phone,
+           o.restaurant_phone,
            a.name AS agent_name,
            a.phone AS agent_phone
          FROM orders o

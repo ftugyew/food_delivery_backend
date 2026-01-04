@@ -98,8 +98,10 @@ module.exports = (db, io) => {
 
       const [orderDetails] = await db.execute(
         `SELECT o.*, r.name as restaurant_name, r.address as restaurant_address, 
-                r.lat as restaurant_lat, r.lng as restaurant_lng, r.phone as restaurant_phone,
-                u.name as customer_name, u.phone as customer_phone
+                r.lat as restaurant_lat, r.lng as restaurant_lng,
+                o.restaurant_phone,
+                u.name as customer_name,
+                o.customer_phone
          FROM orders o
          JOIN restaurants r ON o.restaurant_id = r.id
          JOIN users u ON o.user_id = u.id
@@ -283,9 +285,10 @@ module.exports = (db, io) => {
       // First, try with all columns
       let query = `SELECT o.*, 
                 r.name as restaurant_name, r.address as restaurant_address,
-                r.phone as restaurant_phone,
+                o.restaurant_phone,
                 a.name as agent_name, a.phone as agent_phone, a.vehicle_type,
-                u.name as customer_name, u.phone as customer_phone
+                u.name as customer_name,
+                o.customer_phone
          FROM orders o
          LEFT JOIN restaurants r ON o.restaurant_id = r.id
          LEFT JOIN agents a ON o.agent_id = a.id
