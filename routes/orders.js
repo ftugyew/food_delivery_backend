@@ -328,16 +328,26 @@ module.exports = (io) => {
         message: "Order assigned successfully"
       });
 
+      // Notify ALL other active agents that this order is taken
       const [otherAgents] = await db.execute(
-        "SELECT id FROM agents WHERE is_online = TRUE AND id != ?",
+        "SELECT id FROM agents WHERE is_online = 1 AND id != ?",
         [agent_id]
       );
 
       otherAgents.forEach(otherAgent => {
         io.emit(`agent_${otherAgent.id}_order_taken`, {
           order_id,
-          message: "This order was accepted by another agent"
+          taken_by_agent_id: agent_id,
+          message: "This order was accepted by another agent",
+          timestamp: new Date().toISOString()
         });
+      });
+
+      // Also emit general order_taken event for compatibility
+      io.emit("order_taken", {
+        order_id,
+        taken_by_agent_id: agent_id,
+        timestamp: new Date().toISOString()
       });
 
       io.emit("orderUpdate", { order_id, status: ORDER_STATUS.AGENT_ASSIGNED, agent_id });

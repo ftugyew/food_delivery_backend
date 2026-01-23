@@ -78,7 +78,28 @@ module.exports = (io) => {
         );
 
         // ===== STEP 3: Broadcast to all watching order_id rooms =====
+        // Emit to tracking room (for customer tracking page)
         io.emit(`order_${order_id}_tracking`, {
+          event: "agent_location_update",
+          agent_id: agent_id,
+          latitude: latitude,
+          longitude: longitude,
+          timestamp: new Date().toISOString()
+        });
+
+        // Also emit directly to customer tracking page (specific event)
+        io.emit(`order_${order_id}_location`, {
+          agent_id: agent_id,
+          latitude: latitude,
+          longitude: longitude,
+          accuracy: data.accuracy || null,
+          speed: data.speed || null,
+          heading: data.heading || null,
+          timestamp: new Date().toISOString()
+        });
+
+        // Emit to customer room for real-time updates
+        io.emit(`order_${order_id}_customers`, {
           event: "agent_location_update",
           agent_id: agent_id,
           latitude: latitude,

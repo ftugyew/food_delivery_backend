@@ -77,23 +77,108 @@ router.post("/orders/:orderId/accept", async (req, res) => {
 
     await connection.commit();
 
-    // ===== STEP 6: Broadcast to agents (non-blocking) =====
-    setImmediate(() => {
-      if (restaurant.lat && restaurant.lng) {
-        // Emit to all connected clients (agents)
-        req.app.get("io").emit("new_order_for_agents", {
-          order_id: orderId,
-          restaurant_id: restaurantId,
-          restaurant_name: restaurant.name,
-          restaurant_lat: parseFloat(restaurant.lat),
-          restaurant_lng: parseFloat(restaurant.lng),
-          delivery_lat: parseFloat(order.delivery_lat),
-          delivery_lng: parseFloat(order.delivery_lng),
-          status: "waiting_for_agent",
-          timestamp: new Date().toISOString()
-        });
+    // ===== STEP 6: Broadcast to ALL ACTIVE agents (non-blocking) =====
+    setImmediate(async () => {
+      if (restaurant.lat && restaurant.lng && order.delivery_lat && order.delivery_lng) {
+        const io = req.app.get("io");
+        const db = require("../db");
+        
+        try {
+          // Fetch ALL active online agents (is_online=1, is_busy=0, status='Active')
+          const [activeAgents] = await db.execute(
+            `SELECT id, name, lat, lng, vehicle_type, phone
+             FROM agents 
+             WHERE is_online = 1 
+               AND is_busy = 0 
+               AND status = 'Active'
+               AND lat IS NOT NULL 
+               AND lng IS NOT NULL`
+          );
 
-        console.log(`📡 Order #${orderId} from ${restaurant.name} broadcasted to agents`);
+          if (!activeAgents || activeAgents.length === 0) {
+            console.log(`⚠️ No active agents available for order #${orderId}`);
+            return;
+          }
+
+          // Calculate distance from each agent to delivery location (Haversine)
+          const toRad = (d) => (d * Math.PI) / 180;
+          const R = 6371; // Earth radius in km
+          const deliveryLat = parseFloat(order.delivery_lat);
+          const deliveryLng = parseFloat(order.delivery_lng);
+
+          const agentsWithDistance = activeAgents.map(agent => {
+            const agentLat = parseFloat(agent.lat);
+            const agentLng = parseFloat(agent.lng);
+            const dLat = toRad(deliveryLat - agentLat);
+            const dLng = toRad(deliveryLng - agentLng);
+            const a = Math.sin(dLat / 2) ** 2 + 
+                     Math.cos(toRad(agentLat)) * Math.cos(toRad(deliveryLat)) * 
+                     Math.sin(dLng / 2) ** 2;
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            const distance = R * c;
+            return { ...agent, distance_km: distance };
+          });
+
+          // Sort by distance (nearest first)
+          agentsWithDistance.sort((a, b) => a.distance_km - b.distance_km);
+
+          // Fetch full order details for broadcast
+          const [orderDetails] = await db.execute(
+            `SELECT o.*, u.name as customer_name, u.phone as customer_phone
+             FROM orders o
+             LEFT JOIN users u ON o.user_id = u.id
+             WHERE o.id = ?`,
+            [orderId]
+          );
+
+          const fullOrder = orderDetails[0];
+
+          // Broadcast enriched order to each active agent individually
+          agentsWithDistance.forEach((agent, index) => {
+            const enrichedOrder = {
+              id: orderId,
+              order_id: fullOrder?.order_id || orderId,
+              restaurant_id: restaurantId,
+              restaurant_name: restaurant.name,
+              restaurant_lat: parseFloat(restaurant.lat),
+              restaurant_lng: parseFloat(restaurant.lng),
+              delivery_lat: deliveryLat,
+              delivery_lng: deliveryLng,
+              delivery_address: fullOrder?.delivery_address || null,
+              items: fullOrder?.items ? (typeof fullOrder.items === 'string' ? JSON.parse(fullOrder.items) : fullOrder.items) : [],
+              total: parseFloat(fullOrder?.total || 0),
+              customer_name: fullOrder?.customer_name || 'Customer',
+              customer_phone: fullOrder?.customer_phone || null,
+              status: "waiting_for_agent",
+              distance_to_delivery_km: agent.distance_km.toFixed(2),
+              estimated_arrival_mins: Math.max(5, Math.round(agent.distance_km / 15 * 60)), // 15 km/h average
+              agent_rank: index + 1,
+              total_agents_notified: agentsWithDistance.length,
+              timestamp: new Date().toISOString()
+            };
+
+            // Emit to specific agent
+            io.emit(`agent_${agent.id}_new_order`, enrichedOrder);
+            console.log(`📡 Order #${orderId} sent to Agent #${agent.id} (${agent.distance_km.toFixed(2)} km away)`);
+          });
+
+          // Also emit general broadcast for compatibility
+          io.emit("new_order_for_agents", {
+            order_id: orderId,
+            restaurant_id: restaurantId,
+            restaurant_name: restaurant.name,
+            restaurant_lat: parseFloat(restaurant.lat),
+            restaurant_lng: parseFloat(restaurant.lng),
+            delivery_lat: deliveryLat,
+            delivery_lng: deliveryLng,
+            status: "waiting_for_agent",
+            timestamp: new Date().toISOString()
+          });
+
+          console.log(`✅ Order #${orderId} from ${restaurant.name} broadcasted to ${agentsWithDistance.length} active agents`);
+        } catch (err) {
+          console.error("❌ Error broadcasting to agents:", err);
+        }
       }
     });
 
