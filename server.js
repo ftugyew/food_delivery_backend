@@ -74,6 +74,8 @@ try { paymentRoutes = require("./routes/payments"); } catch (_) {}
 try { trackingRoutes = require("./routes/tracking"); } catch (_) {}
 try { userAddressesRoutes = require("./routes/user-addresses"); } catch (_) {}
 try { deliveryRoutes = require("./routes/delivery"); } catch (_) {}
+let otpRoutes = null;
+try { otpRoutes = require("./routes/otp"); } catch (_) {}
 
 // Ensure authMiddleware is always defined to avoid "not recognised" errors
 if (typeof authMiddleware !== "function") {
@@ -160,9 +162,23 @@ app.get("/api/featured-restaurants", async (req, res) => {
              (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
       FROM featured_restaurants fr
       JOIN restaurants r ON fr.restaurant_id = r.id
+      WHERE COALESCE(fr.is_active, true) = true
       ORDER BY fr.position ASC
     `);
-    return res.json(results);
+    if (results.length) return res.json(results);
+    // Empty table → show approved restaurants so homepage is never blank
+    const [approved] = await db.execute(`
+      SELECT r.id, r.id AS restaurant_id, r.name, r.cuisine, r.image_url AS image_url,
+             r.status AS restaurant_status, true AS is_active,
+             ROW_NUMBER() OVER (ORDER BY r.id) AS position,
+             (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
+             (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
+      FROM restaurants r
+      WHERE r.status = 'approved'
+      ORDER BY r.id ASC
+      LIMIT 10
+    `);
+    return res.json(approved);
   } catch (err) {
     console.error("Error fetching featured restaurants:", err?.message || err);
     try {
@@ -200,9 +216,23 @@ app.get("/api/top-restaurants", async (req, res) => {
              (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
       FROM top_restaurants tr
       JOIN restaurants r ON tr.restaurant_id = r.id
+      WHERE COALESCE(tr.is_active, true) = true
       ORDER BY tr.position ASC
     `);
-    return res.json(results);
+    if (results.length) return res.json(results);
+    // Empty table → show approved restaurants so homepage is never blank
+    const [approved] = await db.execute(`
+      SELECT r.id, r.id AS restaurant_id, r.name, r.cuisine, r.image_url AS image_url,
+             r.status AS restaurant_status, true AS is_active,
+             ROW_NUMBER() OVER (ORDER BY r.id) AS position,
+             (SELECT ROUND(AVG(rv.rating),1) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS avg_rating,
+             (SELECT COUNT(*) FROM restaurant_reviews rv WHERE rv.restaurant_id = r.id) AS rating_count
+      FROM restaurants r
+      WHERE r.status = 'approved'
+      ORDER BY r.id ASC
+      LIMIT 10
+    `);
+    return res.json(approved);
   } catch (err) {
     console.error("Error fetching top restaurants:", err?.message || err);
     try {
@@ -515,6 +545,7 @@ app.delete("/api/menu/:id", authMiddleware, async (req, res) => {
 
 // ===== Users (auth basics) =====
 if (authRoutes) app.use("/api/auth", authRoutes);
+if (otpRoutes) app.use("/api/otp", otpRoutes);
 if (orderRoutes) {
   const or = orderRoutes(io);
   app.use("/api/orders", or);
@@ -2308,7 +2339,9 @@ app.post("/api/delivery/location", (req, res) => {
 // Note: PathError-aware handler is registered earlier; no additional generic handler needed here.
 
 // ✅ Start server
-const PORT = process.env.PORT || 5000;
+// Prefer APP_PORT; avoid DB port 5432 leaking via Windows case-insensitive env (port=5432 → PORT)
+const rawPort = process.env.APP_PORT || process.env.PORT || 5000;
+const PORT = Number(rawPort) === 5432 ? 5000 : (Number(rawPort) || 5000);
 server.listen(PORT, () => {
   console.log(`🚀 Tindo backend running successfully on port ${PORT}`);
   console.log(`📦 Serving frontend from ../frontend`);
