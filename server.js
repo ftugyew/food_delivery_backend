@@ -130,18 +130,9 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 // Avoid favicon 404 log noise
 app.get("/favicon.ico", (req, res) => res.status(204).end());
 
-// Helper: fallback restaurant cards when curated tables are missing
-fetch('http://localhost:5000/api/orders')
-  .then(response => response.json())
-  .then(data => {
-    console.log('Fetched orders:', data);
-  })
-  .catch(error => {
-    console.error('Error fetching orders:', error);
-  });
-
 function fallbackRestaurantCards(limit = 10) {
-  return fetch(`http://localhost:5000/api/restaurants?limit=${limit}`)
+  const baseUrl = process.env.INTERNAL_API_URL || `http://127.0.0.1:${process.env.PORT || 5000}`;
+  return fetch(`${baseUrl}/api/restaurants?limit=${limit}`)
     .then(response => response.json())
     .then(data => {
       console.log('Fetched fallback restaurant cards:', data);
@@ -168,7 +159,7 @@ app.get("/api/featured-restaurants", async (req, res) => {
   } catch (err) {
     console.error("Error fetching featured restaurants:", err?.message || err);
     try {
-      const fallback = await fetchFallbackRestaurantCards(10);
+      const fallback = await fallbackRestaurantCards(10);
       return res.json(fallback);
     } catch (e) {
       console.error("Featured restaurants fallback failed:", e?.message || e);
@@ -188,7 +179,7 @@ app.get("/api/restaurants/featured", async (req, res) => {
     `);
     return res.json(results);
   } catch (err) {
-    try { return res.json(await fetchFallbackRestaurantCards(10)); } catch (_) {}
+    try { return res.json(await fallbackRestaurantCards(10)); } catch (_) {}
     return res.status(500).json({ error: "Failed to fetch featured restaurants" });
   }
 });
@@ -208,7 +199,7 @@ app.get("/api/top-restaurants", async (req, res) => {
   } catch (err) {
     console.error("Error fetching top restaurants:", err?.message || err);
     try {
-      const fallback = await fetchFallbackRestaurantCards(10);
+      const fallback = await fallbackRestaurantCards(10);
       return res.json(fallback);
     } catch (e) {
       console.error("Top restaurants fallback failed:", e?.message || e);
@@ -228,7 +219,7 @@ app.get("/api/restaurants/top", async (req, res) => {
     `);
     return res.json(results);
   } catch (_) {
-    try { return res.json(await fetchFallbackRestaurantCards(10)); } catch (e) {}
+    try { return res.json(await fallbackRestaurantCards(10)); } catch (e) {}
     return res.status(500).json({ error: "Failed to fetch top restaurants" });
   }
 });
@@ -247,7 +238,7 @@ app.get("/api/restaurants", async (req, res) => {
   } catch (err) {
     console.error("Error fetching restaurants:", err?.message || err);
     try {
-      const fb = await fetchFallbackRestaurantCards(20);
+      const fb = await fallbackRestaurantCards(20);
       return res.json(fb);
     } catch (e) {
       console.error("Restaurants fallback failed:", e?.message || e);
@@ -608,7 +599,7 @@ app.get('/api/featured-restaurants', async (req, res) => {
     return res.json(results);
   } catch (err) {
     console.error('Error fetching featured restaurants:', err?.message || err);
-    try { const fallback = await fetchFallbackRestaurantCards(10); return res.json(fallback); } catch (e) { console.error('Featured fallback failed:', e?.message || e); }
+    try { const fallback = await fallbackRestaurantCards(10); return res.json(fallback); } catch (e) { console.error('Featured fallback failed:', e?.message || e); }
     return res.status(500).json({ error: 'Failed to fetch featured restaurants' });
   }
 });
@@ -620,7 +611,7 @@ app.get('/api/top-restaurants', async (req, res) => {
     return res.json(results);
   } catch (err) {
     console.error('Error fetching top restaurants:', err?.message || err);
-    try { const fallback = await fetchFallbackRestaurantCards(10); return res.json(fallback); } catch (e) { console.error('Top fallback failed:', e?.message || e); }
+    try { const fallback = await fallbackRestaurantCards(10); return res.json(fallback); } catch (e) { console.error('Top fallback failed:', e?.message || e); }
     return res.status(500).json({ error: 'Failed to fetch top restaurants' });
   }
 });
@@ -632,7 +623,7 @@ app.get('/api/restaurants', async (req, res) => {
     return res.json(results);
   } catch (err) {
     console.error('Error fetching restaurants:', err?.message || err);
-    try { const fallback = await fetchFallbackRestaurantCards(20); return res.json(fallback); } catch (e) { console.error('Restaurants fallback failed:', e?.message || e); }
+    try { const fallback = await fallbackRestaurantCards(20); return res.json(fallback); } catch (e) { console.error('Restaurants fallback failed:', e?.message || e); }
     return res.status(500).json({ error: 'DB error' });
   }
 });
@@ -1006,7 +997,7 @@ app.get("/api/restaurants", async (req, res) => {
     console.error("Error fetching restaurants:", err.message);
     // Graceful fallback (no SQL fragments)
     try {
-      const fallback = await fetchFallbackRestaurantCards(20);
+      const fallback = await fallbackRestaurantCards(20);
 
       // Server-side search endpoint: search menu items and include restaurant metadata
       app.get('/api/search', async (req, res) => {
@@ -1296,7 +1287,7 @@ app.get("/api/featured-restaurants", async (req, res) => {
   } catch (err) {
     console.error("Error fetching featured restaurants:", err);
     try {
-      const fallback = await fetchFallbackRestaurantCards();
+      const fallback = await fallbackRestaurantCards();
       return res.json(fallback);
     } catch (fallbackErr) {
       console.error('Featured restaurants fallback failed:', fallbackErr.message);
@@ -1442,7 +1433,7 @@ app.get("/api/top-restaurants", async (req, res) => {
   } catch (err) {
     console.error("Error fetching top restaurants:", err);
     try {
-      const fallback = await fetchFallbackRestaurantCards();
+      const fallback = await fallbackRestaurantCards();
       return res.json(fallback);
     } catch (fallbackErr) {
       console.error('Top restaurants fallback failed:', fallbackErr.message);
@@ -2155,7 +2146,11 @@ app.post('/api/update-restaurant-location', authMiddleware, async (req, res) => 
 });
 
 app.all(/.*/, (req, res) => {
-  res.sendFile(path.join(__dirname, '../frontend/index.html'));
+  const frontendIndex = path.join(__dirname, '../frontend/index.html');
+  if (fs.existsSync(frontendIndex)) {
+    return res.sendFile(frontendIndex);
+  }
+  return res.status(404).json({ error: 'Route not found' });
 });
 app.get('/api/agent-route/:agentId', authMiddleware, async (req, res) => {
   try {
