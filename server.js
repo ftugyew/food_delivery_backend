@@ -95,15 +95,22 @@ const allowedOrigins = [
   "http://127.0.0.1:5500",
   "http://localhost:5500",
   "http://localhost:3000",   // React/Vite/Next.js dev servers
-  "http://127.0.0.1:3000"
+  "http://127.0.0.1:3000",
+  "https://food-ameerpet.vercel.app",
+  ...(process.env.FRONTEND_URL || "").split(",").map((origin) => origin.trim()).filter(Boolean)
 ];
+
+function isAllowedOrigin(origin) {
+  return allowedOrigins.includes(origin) ||
+    /^https:\/\/([a-z0-9-]+\.)*(vercel\.app|netlify\.app)$/i.test(origin);
+}
 
 app.use(
   cors({
     origin: function (origin, callback) {
       // Allow requests with no origin (e.g., mobile apps or curl)
       if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) return callback(null, true);
+      if (isAllowedOrigin(origin)) return callback(null, true);
       // Block others (explicitly deny without throwing an error)
       return callback(null, false);
     },
@@ -862,7 +869,7 @@ try {
 app.use(cors({
   origin: function (origin, callback) {
     // Allow REST clients without origin (e.g., Postman) and allowed frontend origins
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin || isAllowedOrigin(origin)) {
       return callback(null, true);
     }
     return callback(null, false);
