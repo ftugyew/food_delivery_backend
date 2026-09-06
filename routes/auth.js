@@ -3,6 +3,7 @@ const express = require("express");
 const router = express.Router();
 const db = require("../db"); // your DB connection
 const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
 const multer = require("multer");
 const path = require("path");
 
@@ -66,6 +67,7 @@ router.post("/register", async (req, res) => {
     }
 
     let restaurantId = null;
+    const passwordHash = await bcrypt.hash(password, 10);
 
     // If restaurant → create restaurant entry too
     if (role === "restaurant") {
@@ -93,7 +95,7 @@ router.post("/register", async (req, res) => {
     // Insert user
     const [userResult] = await db.execute(
       "INSERT INTO users (name, email, phone, password, role, restaurant_id, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [name, email, phone, password, role, restaurantId, status]
+      [name, email, phone, passwordHash, role, restaurantId, status]
     );
 
     const user = {
@@ -177,6 +179,7 @@ router.post("/register-restaurant", upload.single("photo"), async (req, res) => 
 
     // Create restaurant entry with photo
     const imageUrl = req.file ? req.file.filename : null;
+    const passwordHash = await bcrypt.hash(password, 10);
     const [result] = await db.execute(
       `INSERT INTO restaurants (name, description, cuisine, eta, image_url, email, phone, status, created_at) 
        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NOW())`,
@@ -187,7 +190,7 @@ router.post("/register-restaurant", upload.single("photo"), async (req, res) => 
     // Insert user with restaurant_id
     const [userResult] = await db.execute(
       "INSERT INTO users (name, email, phone, password, role, restaurant_id, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
-      [name, email, phone, password, role, restaurantId]
+      [name, email, phone, passwordHash, role, restaurantId]
     );
 
     const user = {
@@ -220,10 +223,14 @@ router.post("/login", async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: "Email and password required" });
 
-    const [rows] = await db.execute("SELECT * FROM users WHERE email = ? AND password = ?", [email, password]);
+    const [rows] = await db.execute("SELECT * FROM users WHERE email = ?", [email]);
     if (rows.length === 0) return res.status(401).json({ error: "Invalid credentials" });
 
     const user = rows[0];
+    const passwordMatches = user.password && user.password.startsWith("$2")
+      ? await bcrypt.compare(password, user.password)
+      : user.password === password;
+    if (!passwordMatches) return res.status(401).json({ error: "Invalid credentials" });
 
     // ✅ Block login until approved
     if (user.status !== "approved") {
