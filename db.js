@@ -1,28 +1,67 @@
-const mysql = require('mysql2/promise');
+const { Pool } = require('pg');
 const dotenv = require('dotenv');
 
 // Load environment variables
 dotenv.config();
 
-// Create database connection pool for better performance
-const db = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASS || '',
-  database: process.env.DB_NAME || 'food_delivery',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
+if (!process.env.DATABASE_URL) {
+  throw new Error('DATABASE_URL is required. Configure the PostgreSQL connection string in Render.');
+}
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
+  max: 10,
 });
+
+function convertPlaceholders(sql) {
+  let parameter = 0;
+  let quote = null;
+  let converted = '';
+
+  for (const character of sql) {
+    if ((character === "'" || character === '"') && (!quote || quote === character)) {
+      quote = quote ? null : character;
+    }
+    if (character === '?' && !quote) {
+      converted += `$${++parameter}`;
+    } else {
+      converted += character;
+    }
+  }
+
+  return converted
+    .replace(/ON DUPLICATE KEY UPDATE\s+otp\s*=\s*\$\d+,\s*created_at\s*=\s*NOW\(\)/i,
+      'ON CONFLICT (phone) DO UPDATE SET otp = EXCLUDED.otp, created_at = NOW()')
+    .replace(/"([^"\n]+)"/g, "'$1'");
+}
+
+async function execute(sql, params = []) {
+  const statement = convertPlaceholders(sql);
+  const result = await pool.query(statement, params);
+  return [result.rows, { ...result, insertId: result.rows[0]?.id }];
+}
+
+function query(sql, params, callback) {
+  if (typeof params === 'function') {
+    callback = params;
+    params = [];
+  }
+
+  pool.query(convertPlaceholders(sql), params || [])
+    .then((result) => callback?.(null, result.rows, result))
+    .catch((error) => callback?.(error));
+}
+
+const db = { execute, query, pool };
 
 // Test the connection
 const testConnection = async () => {
   try {
-    const connection = await db.getConnection();
-    console.log('✅ MySQL connected successfully');
-    connection.release();
+    await pool.query('SELECT 1');
+    console.log('✅ PostgreSQL connected successfully');
   } catch (error) {
-    console.error('❌ MySQL connection error:', error.message);
+    console.error('❌ PostgreSQL connection error:', error.code || error.message || error);
   }
 };
 
